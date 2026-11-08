@@ -1,0 +1,28 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Vektorschrift-Rasterizer (für Meilenstein 5); „hashbrown“ ersetzt die HashMap aus std
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+# Rust-Schnittstelle zum Limine-Boot-Protokoll
+limine = "0.6"
+linked_list_allocator = "0.10"
+# Vorgerenderte Schrift (Noto Sans Mono) – funktioniert ohne Heap und ohne std
+noto-sans-mono-bitmap = { version = "0.4", default-features = false, features = [
+    "regular", "bold",
+    "size_16", "size_24", "size_32",
+    "unicode-basic-latin", "unicode-latin-1-supplement", "unicode-specials",
+] }
+pc-keyboard = "0.9"
+spin = "0.10"
+x86_64 = "0.15"
+
+# Kein Stack-Unwinding im Kernel: bei panic einfach anhalten
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true      # Debug-Symbole auch im Release-Build (für GDB)

@@ -1,0 +1,10 @@
+[build]
+# Eigene Target-Beschreibung: wie x86_64-unknown-none, aber mit SSE/SSE2
+# (schnelle Gleitkomma- und Vektorbefehle für Grafik und Schrift)
+target = "x86_64-aurora.json"
+
+[unstable]
+# core/alloc für unser eigenes Target selbst übersetzen (braucht rust-src)
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true
