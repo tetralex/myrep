@@ -2,12 +2,13 @@
 
 Ein modernes Hobby-Betriebssystem in Rust (x86_64, UEFI, Limine).
 
-**Stand:** Meilensteine 1–4 fertig (Booten, Exceptions, Speicherverwaltung,
-Timer/Tastatur/Maus). Meilenstein 5 (Compositor, Vektorschrift, SSE) ist in Arbeit:
-SSE über ein eigenes Target (`kernel/x86_64-aurora.json`) und die Schrift Inter
-(`kernel/fonts/`, SIL Open Font License) sind bereits eingebunden.
+**Stand:** Meilensteine 1–5 fertig: Booten, Exceptions, Speicherverwaltung,
+Timer/Tastatur/Maus und ein Compositor mit Glas-Blur, Vektorschrift (Inter),
+Animationen, Hell/Dunkel-Modus und frei wählbarer Akzentfarbe.
 
-![Meilenstein 4](docs/meilenstein-4.png)
+![Meilenstein 5 – dunkel](docs/meilenstein-5-dunkel.png)
+
+![Meilenstein 5 – hell](docs/meilenstein-5-hell.png)
 
 ![Fehlerbildschirm](docs/meilenstein-2-pagefault.png)
 
@@ -26,6 +27,13 @@ make debug  # QEMU wartet auf GDB an Port 1234
 * **QEMU nativ:** `.\run.ps1` in PowerShell – zum Benutzen der Maus ins Fenster klicken, freigeben mit **Strg+Alt+G**
 * **VirtualBox:** neue VM „Other/Unknown (64-bit)“, *EFI aktivieren*, `build\aurora.iso` als DVD einlegen
 * **USB-Stick:** ISO mit Rufus im **DD-Modus** schreiben (bootet per UEFI und BIOS)
+
+## Bedienung
+
+* **Karten verschieben:** am oberen Rand (Titel) mit der Maus ziehen
+* **Hell/Dunkel:** Schalter in „Darstellung“ oder **F2**
+* **Akzentfarbe:** Farbtupfer anklicken oder über der Karte scrollen
+* **Tippen:** deutsches Layout, Esc löscht den Text
 
 ## Struktur
 
@@ -56,10 +64,16 @@ aurora-os/
       ├─ ringbuf.rs         Ringpuffer ohne Sperren
       ├─ time.rs            Ticks, Uhrzeit, Datum
       ├─ io.rs              I/O-Ports
-      ├─ desktop.rs         interaktiver Bildschirm
+      ├─ desktop.rs         Desktop: Karten, Eingaben, Animationen
+      ├─ compositor.rs      Ebenen, Schatten, Glas-Blur, Damage-Tracking
+      ├─ paint.rs           Zeichnen mit Alphakanal (Gleitkomma/SSE)
+      ├─ font.rs            Vektorschrift Inter (fontdue) + Glyphen-Cache
+      ├─ wallpaper.rs       Hintergrundbild + Weichzeichner
+      ├─ theme.rs           Farbpaletten Hell/Dunkel, Akzentfarben
+      ├─ anim.rs            Easing-Kurven, Tweens
       ├─ screens.rs         Start- und Fehlerbildschirm
       ├─ framebuffer.rs     globaler Bildschirmzugriff
-      ├─ gfx.rs             Framebuffer-Grafik (AA, Schatten, Text)
+      ├─ gfx.rs             einfache Grafik für Start- und Fehlerbildschirm
       ├─ fmtbuf.rs          fmt!-Makro ohne Heap
       └─ serial.rs          COM1-Debug-Ausgabe
 ```

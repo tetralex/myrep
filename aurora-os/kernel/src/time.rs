@@ -76,3 +76,29 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
     (year, month, day)
 }
+
+// ---------------------------------------------------------------------------
+// Feine Zeitmessung mit dem Time Stamp Counter (TSC): ein Zähler in der CPU,
+// der mit (fast) jedem Takt um 1 steigt – viel genauer als 1-ms-Ticks.
+// ---------------------------------------------------------------------------
+
+static TSC_PER_US: AtomicU64 = AtomicU64::new(1);
+
+pub fn rdtsc() -> u64 {
+    unsafe { core::arch::x86_64::_rdtsc() }
+}
+
+/// TSC gegen den (bereits geeichten) APIC-Timer messen
+pub fn calibrate_tsc() -> u64 {
+    let (t0, k0) = (rdtsc(), ticks());
+    sleep_ms(50);
+    let (t1, k1) = (rdtsc(), ticks());
+    let per_us = ((t1 - t0) / ((k1 - k0).max(1) * 1000)).max(1);
+    TSC_PER_US.store(per_us, Ordering::Relaxed);
+    per_us
+}
+
+/// Mikrosekunden seit einem früheren `rdtsc()`-Wert
+pub fn micros_since(tsc: u64) -> u64 {
+    (rdtsc() - tsc) / TSC_PER_US.load(Ordering::Relaxed)
+}

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # Vektorschrift-Rasterizer (für Meilenstein 5); „hashbrown“ ersetzt die HashMap aus std
 fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+libm = "0.2"
 # Rust-Schnittstelle zum Limine-Boot-Protokoll
 limine = "0.6"
 linked_list_allocator = "0.10"

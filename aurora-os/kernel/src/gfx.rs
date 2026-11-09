@@ -2,8 +2,6 @@
 //! Alles in Ganzzahl-/Festkomma-Arithmetik: Der Kernel-Target hat SSE
 //! deaktiviert, Gleitkomma wäre nur per Software-Emulation möglich.
 
-use alloc::vec;
-use alloc::vec::Vec;
 use noto_sans_mono_bitmap::{FontWeight, RasterHeight, get_raster, get_raster_width};
 
 #[derive(Clone, Copy)]
@@ -54,59 +52,12 @@ impl Rect {
     }
 }
 
-/// Eine Zeichenfläche im RAM (Heap) statt im Grafikspeicher.
-/// Lesen aus dem RAM ist viel schneller als aus dem Framebuffer –
-/// Alpha-Blending (lesen + mischen + schreiben) lohnt sich nur hier.
-pub struct Surface {
-    _buf: Vec<u32>,
-    pub canvas: Canvas,
-}
-
-impl Surface {
-    pub fn new(width: i32, height: i32, shift: (u8, u8, u8)) -> Self {
-        let mut buf = vec![0u32; (width * height) as usize];
-        let canvas = unsafe { Canvas::new(buf.as_mut_ptr(), width as u64, height as u64, width as u64 * 4, shift) };
-        Surface { _buf: buf, canvas }
-    }
-}
-
 impl Canvas {
     /// # Safety
     /// `ptr` muss auf einen gültigen 32-bpp-Framebuffer der angegebenen Größe zeigen.
     pub unsafe fn new(ptr: *mut u32, width: u64, height: u64, pitch: u64, shift: (u8, u8, u8)) -> Self {
         let (w, h) = (width as i32, height as i32);
         Canvas { ptr, width: w, height: h, stride: (pitch / 4) as usize, shift, clip: (0, 0, w, h) }
-    }
-
-    pub fn shift(&self) -> (u8, u8, u8) {
-        self.shift
-    }
-
-    /// Zeichnen auf ein Rechteck beschränken
-    pub fn set_clip(&mut self, r: Rect) {
-        self.clip = (r.x.max(0), r.y.max(0), (r.x + r.w).min(self.width), (r.y + r.h).min(self.height));
-    }
-
-    pub fn reset_clip(&mut self) {
-        self.clip = (0, 0, self.width, self.height);
-    }
-
-    /// Rechteck 1:1 aus einer gleich großen Zeichenfläche kopieren
-    pub fn copy_from(&mut self, src: &Canvas, r: Rect) {
-        let x0 = r.x.max(0).min(self.width);
-        let x1 = (r.x + r.w).max(0).min(self.width);
-        let y0 = r.y.max(0).min(self.height);
-        let y1 = (r.y + r.h).max(0).min(self.height);
-        if x1 <= x0 {
-            return;
-        }
-        for y in y0..y1 {
-            unsafe {
-                let s = src.ptr.add(y as usize * src.stride + x0 as usize);
-                let d = self.ptr.add(y as usize * self.stride + x0 as usize);
-                core::ptr::copy_nonoverlapping(s, d, (x1 - x0) as usize);
-            }
-        }
     }
 
     fn pack(&self, c: Color) -> u32 {
@@ -257,48 +208,6 @@ impl Canvas {
             }
         });
         cx - x
-    }
-
-    /// Text vergrößert (Faktor `scale`) mit bilinearer Interpolation –
-    /// so wird aus der 32-px-Schrift eine weiche 96-px-Uhr.
-    pub fn text_scaled(&mut self, x: i32, y: i32, s: &str, weight: FontWeight, size: RasterHeight, scale: i32, c: Color) -> i32 {
-        let mut cx = x;
-        let mut glyphs = Vec::new();
-        for_each_glyph(s, |ch| glyphs.push(ch));
-        for ch in glyphs {
-            let Some(r) = get_raster(ch, weight, size).or_else(|| get_raster('?', weight, size)) else { continue };
-            let (gw, gh) = (r.width() as i32, r.height() as i32);
-            let px = |x: i32, y: i32| -> i32 {
-                if x < 0 || y < 0 || x >= gw || y >= gh { 0 } else { r.pixel(x as usize, y as usize).unwrap_or(0) as i32 }
-            };
-            for oy in 0..gh * scale {
-                // Position im Original in 1/256 Pixel
-                let sy = (oy * 256 + 128) / scale - 128;
-                let (y0, fy) = (sy >> 8, sy & 255);
-                for ox in 0..gw * scale {
-                    let sx = (ox * 256 + 128) / scale - 128;
-                    let (x0, fx) = (sx >> 8, sx & 255);
-                    let top = px(x0, y0) * (256 - fx) + px(x0 + 1, y0) * fx;
-                    let bottom = px(x0, y0 + 1) * (256 - fx) + px(x0 + 1, y0 + 1) * fx;
-                    let v = (top * (256 - fy) + bottom * fy) >> 16;
-                    self.blend(cx + ox, y + oy, c, v as u32);
-                }
-            }
-            cx += gw * scale;
-        }
-        cx - x
-    }
-
-    /// Geglätteter Ring (Kreislinie) um (cx, cy)
-    pub fn ring(&mut self, cx: i32, cy: i32, r: i32, thickness: i32, c: Color, alpha: u32) {
-        for py in cy - r - 1..cy + r + 1 {
-            for px in cx - r - 1..cx + r + 1 {
-                let outer = coverage(rr_sdf(px, py, cx - r, cy - r, 2 * r, 2 * r, r));
-                let ri = (r - thickness).max(0);
-                let inner = coverage(rr_sdf(px, py, cx - ri, cy - ri, 2 * ri, 2 * ri, ri));
-                self.blend(px, py, c, outer.saturating_sub(inner) * alpha / 256);
-            }
-        }
     }
 
     pub fn text_width(s: &str, weight: FontWeight, size: RasterHeight) -> i32 {

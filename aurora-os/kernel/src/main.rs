@@ -1,4 +1,4 @@
-//! AuroraOS – Meilenstein 4: Timer, Tastatur und Maus.
+//! AuroraOS – Meilenstein 5: Compositor, Vektorschrift, Animationen.
 
 #![no_std]
 #![no_main]
@@ -10,22 +10,28 @@ extern crate alloc;
 
 mod acpi;
 mod allocator;
+mod anim;
 mod apic;
+mod compositor;
 mod desktop;
 mod entry;
 mod fmtbuf;
+mod font;
 mod framebuffer;
 mod gdt;
 mod gfx;
 mod interrupts;
 mod io;
 mod memory;
+mod paint;
 mod ps2;
 mod ringbuf;
 mod screens;
 mod selftest;
 mod serial;
+mod theme;
 mod time;
+mod wallpaper;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
@@ -132,6 +138,10 @@ unsafe extern "C" fn kmain() -> ! {
     serial_println!("[aurora] Heap: {} MiB ab {:#x}", allocator::HEAP_SIZE / 1024 / 1024, allocator::HEAP_START);
     // Ab hier funktionieren Box, Vec, String, format! …
 
+    // Vektorschrift laden (braucht den Heap)
+    let font_glyphs = font::init();
+    serial_println!("[aurora] Schrift Inter: {:?} Zeichen", font_glyphs);
+
     // --- Interrupt-Controller, Timer, PS/2 ----------------------------------
     time::init(DATE_REQUEST.response().map(|d| d.timestamp).unwrap_or(0));
     let rsdp = RSDP_REQUEST.response().expect("keine ACPI-Tabellen").address as u64;
@@ -151,6 +161,8 @@ unsafe extern "C" fn kmain() -> ! {
         x86_64::instructions::interrupts::enable_and_hlt();
     }
     let timer_ok = time::ticks() > t0 + 10;
+    let tsc = time::calibrate_tsc();
+    serial_println!("[aurora] TSC: {} Takte pro Mikrosekunde", tsc);
 
     // --- Selbsttests --------------------------------------------------------
     let mut tests = vec![
@@ -164,6 +176,17 @@ unsafe extern "C" fn kmain() -> ! {
     tests.push(SelfTest { label: format!("APIC-Timer: {} Hz (geeicht mit dem PIT)", time::HZ), ok: timer_ok });
     let mouse_label = if ps2.wheel { "PS/2: Tastatur und Maus mit Scrollrad" } else { "PS/2: Tastatur und Maus" };
     tests.push(SelfTest { label: mouse_label.into(), ok: ps2.mouse });
+    // SSE: CR4.OSFXSR wurde in entry.rs gesetzt – und dieser Code nutzt es bereits
+    let sse = x86_64::registers::control::Cr4::read().contains(x86_64::registers::control::Cr4Flags::OSFXSR);
+    let x = core::hint::black_box(2.25f32);
+    tests.push(SelfTest { label: format!("SSE aktiv, Gleitkomma in Hardware ({}² = {})", x, x * x), ok: sse && x * x == 5.0625 });
+    tests.push(SelfTest {
+        label: match font_glyphs {
+            Ok(n) => format!("Vektorschrift Inter geladen ({} Zeichen)", n),
+            Err(e) => format!("Vektorschrift: {}", e),
+        },
+        ok: font_glyphs.is_ok(),
+    });
 
     // --- Startbildschirm ----------------------------------------------------
     let fbi = framebuffer::info().unwrap();
