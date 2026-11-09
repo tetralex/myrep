@@ -43,6 +43,8 @@ echo [4/4] Baue .exe mit PyInstaller ...
 "%VPY%" -m PyInstaller --noconfirm --clean app.spec || goto :error
 
 for /f "usebackq delims=" %%N in (`call "%VPY%" -c "from app.config import EXE_NAME; print(EXE_NAME)"`) do set "EXE=%%N"
+for /f "usebackq delims=" %%N in (`call "%VPY%" -c "from app.config import APP_NAME; print(APP_NAME)"`) do set "APPNAME=%%N"
+for /f "usebackq delims=" %%V in (`call "%VPY%" -c "from app.config import APP_VERSION; print(APP_VERSION)"`) do set "APPVER=%%V"
 
 echo.
 echo  Fertig!  Die App liegt hier:  dist\%EXE%.exe
@@ -53,8 +55,6 @@ set "ISCC="
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 if defined ISCC (
-    for /f "usebackq delims=" %%N in (`call "%VPY%" -c "from app.config import APP_NAME; print(APP_NAME)"`) do set "APPNAME=%%N"
-    for /f "usebackq delims=" %%V in (`call "%VPY%" -c "from app.config import APP_VERSION; print(APP_VERSION)"`) do set "APPVER=%%V"
     echo Inno Setup gefunden - baue Installer ...
     "%ISCC%" /DMyAppName="%APPNAME%" /DMyAppVersion="%APPVER%" /DMyAppExeName="%EXE%.exe" installer.iss && echo Installer liegt in: dist\installer
 ) else (
