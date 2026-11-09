@@ -17,20 +17,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Pakete installieren
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+      - name: build.bat ausführen (wie beim Doppelklick)
+        shell: cmd
+        env:
+          NOPAUSE: "1"
+          QT_QPA_PLATFORM: offscreen
+        run: call build.bat
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q tests
-      - name: Icon erzeugen
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python tools/make_icon.py
-      - name: .exe bauen
-        run: python -m PyInstaller --noconfirm --clean app.spec
+        run: .venv\Scripts\python.exe -m pytest -q tests
       - name: Kurzer Starttest
         shell: pwsh
         run: |
