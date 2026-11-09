@@ -21,6 +21,7 @@ from .pages.refrigerants import RefrigerantsPage
 from .pages.search import QuickSearch, SearchPage
 from .pages.settings import SettingsPage
 from .pages.tools import ToolsPage
+from .chat import ChatPanel, EdgeWindow
 from .widgets import AppContext
 
 NAV = [
@@ -78,6 +79,11 @@ class MainWindow(QMainWindow):
             self.nav.addItem(it)
         self.nav.currentRowChanged.connect(self._on_nav)
         sl.addWidget(self.nav, 1)
+        self.chat_btn = QPushButton("💬  Assistent      Strg+J")
+        self.chat_btn.setObjectName("Primary")
+        self.chat_btn.setStyleSheet("text-align: left;")
+        self.chat_btn.clicked.connect(self.toggle_chat)
+        sl.addWidget(self.chat_btn)
         self.theme_btn = QPushButton()
         self.theme_btn.clicked.connect(self._toggle_theme)
         sl.addWidget(self.theme_btn)
@@ -103,6 +109,17 @@ class MainWindow(QMainWindow):
         for p in self.pages.values():
             self.stack.addWidget(p)
 
+        # Chat-Assistent: rechts im Fenster oder als Leiste am Bildschirmrand
+        self.central_layout = lay
+        self.chat = ChatPanel(ctx)
+        self.chat.setFixedWidth(420)
+        self.chat.setStyleSheet("QFrame#ChatPanel { border-left: 1px solid rgba(127,127,127,0.25); }")
+        self.chat.hide()
+        lay.addWidget(self.chat)
+        self.chat.detach_requested.connect(self.toggle_edge)
+        self.chat.close_requested.connect(self.close_chat)
+        self.edge: EdgeWindow | None = None
+
         ctx.navigate.connect(self.open_item)
         ctx.open_page.connect(self.open_page)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.quick_search)
@@ -110,6 +127,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+N"), self, activated=lambda: (self.open_page("articles"),
                                                                     self.pages["articles"]._new_article()))
         QShortcut(QKeySequence("Ctrl+I"), self, activated=lambda: self.open_page("import"))
+        QShortcut(QKeySequence("Ctrl+J"), self, activated=self.toggle_chat)
+        QShortcut(QKeySequence("F5"), self, activated=lambda: self.ctx.notify("all"))
         self._update_theme_button()
         self.open_page(ctx.db.get_setting("start_page", "home"))
 
@@ -132,6 +151,12 @@ class MainWindow(QMainWindow):
         self.nav.blockSignals(False)
 
     def open_page(self, key: str) -> None:
+        if key == "__raise__":
+            if self.isMinimized():
+                self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            return
         if key.startswith("search:"):
             self.stack.setCurrentWidget(self.pages["search"])
             self._select_nav("search")
@@ -174,6 +199,47 @@ class MainWindow(QMainWindow):
         dlg.input.setFocus()
         dlg.exec()
 
+    # ---------------------------------------------------------- Assistent
+    def toggle_chat(self) -> None:
+        if self.edge is not None:
+            if self.edge.collapsed:
+                self.edge.toggle_collapse()
+            else:
+                self.edge.activateWindow()
+                self.chat.focus_input()
+            return
+        self.chat.setVisible(not self.chat.isVisible())
+        if self.chat.isVisible():
+            self.chat.focus_input()
+
+    def toggle_edge(self) -> None:
+        """Assistent an den rechten Bildschirmrand heften bzw. zurück ins Fenster holen."""
+        if self.edge is None:
+            self.central_layout.removeWidget(self.chat)
+            self.chat.setMinimumWidth(0)
+            self.chat.setMaximumWidth(16777215)
+            self.edge = EdgeWindow(self.ctx, self.chat)
+            self.chat.show()
+            self.edge.show()
+            self.chat.focus_input()
+        else:
+            panel = self.edge.take_panel()
+            self.edge.close()
+            self.edge.deleteLater()
+            self.edge = None
+            panel.setFixedWidth(420)
+            self.central_layout.addWidget(panel)
+            panel.show()
+
+    def open_edge(self) -> None:
+        if self.edge is None:
+            self.toggle_edge()
+
+    def close_chat(self) -> None:
+        if self.edge is not None:
+            self.toggle_edge()
+        self.chat.hide()
+
     # ---------------------------------------------------------- Theme
     def apply_settings(self) -> None:
         app = QApplication.instance()
@@ -205,6 +271,8 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------- Beenden
     def closeEvent(self, e):
+        if self.edge is not None:
+            self.edge.close()
         if self.ctx.db.get_setting("auto_backup", True):
             try:
                 package.auto_backup(self.ctx.db)

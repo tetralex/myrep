@@ -8,12 +8,12 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout, QInputDialog, QLabel,
-    QPushButton, QScrollArea, QSpinBox, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QWidget,
 )
 from PySide6.QtCore import Qt
 
-from ...config import APP_NAME, APP_VERSION
-from ...core import package
+from ...config import APP_NAME, APP_VERSION, user_data_dir
+from ...core import local_config, package
 from ..widgets import AppContext, Card, Page, confirm, hbox, info, muted, warn
 
 
@@ -92,10 +92,63 @@ class SettingsPage(Page):
         about.lay.addLayout(hbox(b6, None))
         about.lay.addStretch(1)
         grid.addWidget(about, 1, 1)
-        grid.setRowStretch(2, 1)
+
+        # ---------------------------------------------------------- Speicherort
+        store = Card("Speicherort der Daten", "🗄")
+        self.store_path = QLabel()
+        self.store_path.setWordWrap(True)
+        self.store_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        store.lay.addWidget(self.store_path)
+        store.lay.addWidget(muted(
+            "Für einen zentralen Speicherort einen Ordner auf einem Netzlaufwerk, NAS oder in "
+            "OneDrive/SharePoint wählen – dann arbeiten alle PCs mit demselben Wissen. Gleichzeitiges Lesen "
+            "ist kein Problem; speichern zwei Personen im selben Moment, wartet einer kurz. Bei OneDrive/"
+            "Dropbox möglichst nur an einem PC gleichzeitig bearbeiten (Sync-Konflikte)."))
+        b7 = QPushButton("📁 Zentralen Ordner wählen …")
+        b7.setObjectName("Primary")
+        b7.clicked.connect(self._choose_store)
+        self.b_local = QPushButton("💻 Zurück auf lokal")
+        self.b_local.clicked.connect(self._store_local)
+        store.lay.addLayout(hbox(b7, self.b_local, None))
+        store.lay.addStretch(1)
+        grid.addWidget(store, 2, 0)
+
+        # ---------------------------------------------------------- Assistent
+        bot = Card("Chat-Assistent", "💬")
+        self.mode_offline = QRadioButton("Offline – durchsucht dein Wissen und rechnet direkt (kostenlos, ohne Internet)")
+        self.mode_ai = QRadioButton("KI-Modus – Claude formuliert Antworten aus deinem Wissen (Internet + API-Schlüssel)")
+        bot.lay.addWidget(self.mode_offline)
+        bot.lay.addWidget(self.mode_ai)
+        form2 = QFormLayout()
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.Password)
+        self.api_key.setPlaceholderText("sk-ant-…  (von console.anthropic.com)")
+        form2.addRow("API-Schlüssel", self.api_key)
+        bot.lay.addLayout(form2)
+        self.edge_at_start = QCheckBox("Assistent beim Start am rechten Bildschirmrand öffnen")
+        bot.lay.addWidget(self.edge_at_start)
+        bot.lay.addWidget(muted(
+            "Im KI-Modus werden deine Frage und die dazu gefundenen Inhalte aus deinem Wissen an Anthropic "
+            "übertragen (kostenpflichtig nach Verbrauch). Ohne Internet antwortet der Assistent automatisch offline. "
+            "Der Schlüssel wird nur lokal auf diesem PC gespeichert."))
+        b8 = QPushButton("Übernehmen")
+        b8.setObjectName("Primary")
+        b8.clicked.connect(self._save_assistant)
+        bot.lay.addLayout(hbox(b8, None))
+        bot.lay.addStretch(1)
+        grid.addWidget(bot, 2, 1)
+        grid.setRowStretch(3, 1)
         self.refresh()
 
     def refresh(self) -> None:
+        central = local_config.get("data_dir")
+        self.store_path.setText(("🌐 <b>Zentral:</b> " if central else "💻 <b>Lokal:</b> ") + str(self.db.path.parent))
+        self.b_local.setEnabled(bool(central))
+        ai = local_config.get("assistant_mode", "offline") == "ki"
+        self.mode_ai.setChecked(ai)
+        self.mode_offline.setChecked(not ai)
+        self.api_key.setText(local_config.get("anthropic_api_key", ""))
+        self.edge_at_start.setChecked(bool(local_config.get("assistant_at_start", False)))
         s = self.db
         self.theme.setCurrentIndex(["system", "light", "dark"].index(s.get_setting("theme", "system")))
         self.font.setValue(int(s.get_setting("font_size", 11)))
@@ -169,6 +222,88 @@ class SettingsPage(Page):
             warn(self, "Fehler", "\n".join(result.errors))
         else:
             info(self, "Wiederhergestellt", f"Sicherung eingespielt: {result.summary()}")
+
+    # ---------------------------------------------------------- Speicherort
+    def _choose_store(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Zentralen Speicherort wählen")
+        if not folder:
+            return
+        target = Path(folder)
+        if target.resolve() == self.db.path.parent.resolve():
+            info(self, "Schon da", "Die Daten liegen bereits in diesem Ordner.")
+            return
+        try:
+            probe = target / ".schreibtest"
+            probe.write_text("ok")
+            probe.unlink()
+        except OSError as exc:
+            warn(self, "Kein Schreibzugriff", f"In diesen Ordner kann nicht geschrieben werden:\n{exc}")
+            return
+        if (target / self.db.path.name).exists():
+            box = QMessageBox(self)
+            box.setWindowTitle("Datenbank gefunden")
+            box.setText("In diesem Ordner gibt es schon eine Wissensdatenbank (z. B. von einem Kollegen).")
+            use = box.addButton("Diese verwenden", QMessageBox.AcceptRole)
+            merge = box.addButton("Verwenden + mein Wissen dazuspielen", QMessageBox.ActionRole)
+            box.addButton("Abbrechen", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() not in (use, merge):
+                return
+            if box.clickedButton() is merge:
+                tmp = package.export_package(self.db, user_data_dir() / "uebertrag.zip")
+                local_config.set("pending_merge", str(tmp))
+        else:
+            if not confirm(self, "Daten übertragen",
+                           f"Deine aktuellen Daten werden nach\n{target}\nkopiert und ab dann dort gespeichert.\n\n"
+                           "Andere PCs wählen danach denselben Ordner. Fortfahren?"):
+                return
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                self.db.copy_to(target)
+            except OSError as exc:
+                QApplication.restoreOverrideCursor()
+                warn(self, "Fehler", f"Kopieren fehlgeschlagen:\n{exc}")
+                return
+            QApplication.restoreOverrideCursor()
+        local_config.set("data_dir", str(target))
+        self._restart("Speicherort geändert. Die App startet jetzt neu.")
+
+    def _store_local(self) -> None:
+        if not confirm(self, "Zurück auf lokal",
+                       "Ab dem Neustart wird wieder die lokale Datenbank dieses PCs verwendet.\n"
+                       "Soll der aktuelle zentrale Stand vorher nach lokal kopiert werden?"):
+            return
+        local = user_data_dir()
+        try:
+            backup = local / "wissen_vor_umstellung.db"
+            if (local / self.db.path.name).exists():
+                (local / self.db.path.name).replace(backup)
+            self.db.copy_to(local)
+        except OSError as exc:
+            warn(self, "Fehler", f"Kopieren fehlgeschlagen:\n{exc}")
+            return
+        local_config.set("data_dir", None)
+        self._restart("Umgestellt auf lokal. Die App startet jetzt neu.")
+
+    def _restart(self, message: str) -> None:
+        import sys
+        from PySide6.QtCore import QProcess
+        info(self, "Neustart", message)
+        args = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
+        QProcess.startDetached(sys.executable, args)
+        QApplication.quit()
+
+    # ---------------------------------------------------------- Assistent
+    def _save_assistant(self) -> None:
+        key = self.api_key.text().strip()
+        if self.mode_ai.isChecked() and not key:
+            warn(self, "Schlüssel fehlt", "Für den KI-Modus bitte einen API-Schlüssel eintragen.")
+            return
+        local_config.set("assistant_mode", "ki" if self.mode_ai.isChecked() else "offline")
+        local_config.set("anthropic_api_key", key or None)
+        local_config.set("assistant_at_start", self.edge_at_start.isChecked() or None)
+        self.ctx.notify("settings")
+        info(self, "Gespeichert", "Assistent-Einstellungen übernommen. ✅")
 
     def _reindex(self) -> None:
         self.db.rebuild_index()

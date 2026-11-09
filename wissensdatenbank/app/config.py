@@ -35,7 +35,12 @@ def resource_path(relative: str) -> Path:
 
 
 def user_data_dir() -> Path:
-    """Benutzerdaten-Ordner (%APPDATA%\\KaelteWiki unter Windows)."""
+    """Lokaler Benutzer-Ordner (%APPDATA%\\KaelteWiki unter Windows).
+
+    Hier liegen immer die lokalen Einstellungen (local_config.json, z. B. der
+    gewählte Speicherort und der API-Schlüssel). Die Wissensdatenbank selbst
+    liegt hier, solange kein zentraler Speicherort gewählt wurde.
+    """
     override = os.environ.get("KAELTEWIKI_DATA_DIR")
     if override:
         root = Path(override)
@@ -45,3 +50,10 @@ def user_data_dir() -> Path:
         root = Path.home() / ".local" / "share" / DATA_DIR_NAME
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def data_dir() -> Path:
+    """Ordner der Wissensdatenbank – lokal oder zentral (Netzlaufwerk, NAS, OneDrive …)."""
+    from .core import local_config
+    configured = local_config.load().get("data_dir")
+    return Path(configured) if configured else user_data_dir()

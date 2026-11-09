@@ -189,9 +189,11 @@ class Database:
         self.path = Path(path)
         self.attachments_dir = attachments_dir or self.path.parent / "anhaenge"
         self.attachments_dir.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.path))
+        self.conn = sqlite3.connect(str(self.path), timeout=15)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # Bei zentraler Ablage (Netzlaufwerk) kurz warten statt sofort „database is locked“
+        self.conn.execute("PRAGMA busy_timeout = 15000")
         self.conn.executescript(SCHEMA)
         try:
             self.conn.executescript(FTS_SCHEMA)
@@ -208,6 +210,24 @@ class Database:
     # ------------------------------------------------------------------ allgemein
     def close(self) -> None:
         self.conn.close()
+
+    def copy_to(self, target_dir: Path) -> Path:
+        """Kopiert Datenbank (konsistent über die SQLite-Backup-API) und Anhänge in einen anderen Ordner."""
+        target_dir = Path(target_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / self.path.name
+        dest = sqlite3.connect(str(target))
+        try:
+            self.conn.commit()
+            self.conn.backup(dest)
+        finally:
+            dest.close()
+        att_target = target_dir / "anhaenge"
+        att_target.mkdir(exist_ok=True)
+        for f in self.attachments_dir.iterdir():
+            if f.is_file() and not (att_target / f.name).exists():
+                shutil.copy2(f, att_target / f.name)
+        return target
 
     def q(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         return self.conn.execute(sql, tuple(params)).fetchall()

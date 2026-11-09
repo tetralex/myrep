@@ -38,7 +38,18 @@ python -m pytest
 | 📥 **Wissen importieren** | siehe unten |
 | ⚙️ **Daten & Einstellungen** | Hell/Dunkel/Wie Windows, Schriftgröße, Startseite, Export als Wissenspaket, automatische Sicherung, Wiederherstellung |
 
-**Tastenkürzel:** `Strg+K` Schnellsuche · `Strg+N` neuer Artikel · `Strg+I` importieren · `Strg+S` speichern im Editor
+**Tastenkürzel:** `Strg+K` Schnellsuche · `Strg+J` Assistent · `Strg+N` neuer Artikel · `Strg+I` importieren · `Strg+S` speichern im Editor · `F5` neu laden (z. B. Änderungen von Kollegen)
+
+## 💬 Chat-Assistent
+
+Über **„💬 Assistent“** links unten (oder `Strg+J`) öffnet sich rechts ein Chat. Mit 📌 heftest du ihn als **Leiste an den rechten Bildschirmrand** – sie bleibt im Vordergrund, auch wenn du in anderen Programmen arbeitest, und lässt sich mit ⮞ zu einem schmalen 💬-Streifen einklappen. Unter „Daten & Einstellungen“ kann sie beim Start automatisch erscheinen.
+
+| Modus | Was passiert |
+|---|---|
+| **Offline** (Standard) | Durchsucht Artikel, Glossar, Fehlerbilder, Notizen und Kältemittel und rechnet direkt: Sättigungsdruck/-temperatur (inkl. Glide), Überhitzung/Unterkühlung, CO₂-Äquivalent mit Prüfintervall. Kostenlos, ohne Internet. |
+| **KI-Modus** (optional) | Claude (Anthropic) formuliert Antworten in eigenen Worten und nutzt dafür dein Wissen und die Rechner der App als Werkzeuge. Braucht Internet und einen eigenen API-Schlüssel von console.anthropic.com (Abrechnung nach Verbrauch). Frage und gefundene Inhalte werden dabei an Anthropic übertragen. Ohne Verbindung antwortet der Assistent automatisch offline. |
+
+Beispiele: *„Druck R290 bei 0 °C“*, *„R448A bei 3,5 bar und 8 °C Saugleitung“*, *„Prüfpflicht 12 kg R404A“*, *„Was ist Glide?“*, *„Verdampfer vereist“*. Links unter den Antworten öffnen den passenden Eintrag in der App.
 
 ## Neues Wissen importieren
 
@@ -62,7 +73,9 @@ Optionen: Zielkategorie, Tags und was passiert, wenn ein Titel schon existiert (
 
 ## Daten
 
-- Gespeichert wird alles unter `%APPDATA%\KaelteWiki\`: `wissen.db` (SQLite), `anhaenge\` und `backups\`.
+- Standardmäßig wird alles lokal unter `%APPDATA%\KaelteWiki\` gespeichert: `wissen.db` (SQLite), `anhaenge\` und `backups\`.
+- **Zentraler Speicherort:** Unter „Daten & Einstellungen → Speicherort der Daten“ einen Ordner auf einem Netzlaufwerk, NAS oder in OneDrive/SharePoint wählen. Die vorhandenen Daten werden dorthin kopiert; auf weiteren PCs denselben Ordner wählen (dort kann das eigene Wissen dazugespielt werden). Gleichzeitiges Lesen ist problemlos, beim gleichzeitigen Speichern wartet einer kurz. Bei OneDrive/Dropbox möglichst nur an einem PC gleichzeitig bearbeiten. Ist der Ordner beim Start nicht erreichbar (Netzlaufwerk/VPN), fragt die App, ob sie lokal starten soll.
+- Lokale Einstellungen (gewählter Speicherort, API-Schlüssel) liegen immer in `%APPDATA%\KaelteWiki\local_config.json` – nie in der gemeinsamen Datenbank.
 - Beim Beenden wird automatisch gesichert, die letzten 10 Sicherungen bleiben erhalten.
 - Bei einer Deinstallation bleiben deine Daten erhalten.
 
@@ -73,7 +86,7 @@ wissensdatenbank/
 ├── main.py                 Startpunkt
 ├── app/
 │   ├── config.py           App-Name, Version, Pfade  ← Namen hier ändern
-│   ├── core/               Datenbank (SQLite + FTS5), Import, Export/Backup
+│   ├── core/               Datenbank (SQLite + FTS5), Import, Export/Backup, Assistent
 │   ├── calc/               Stoffdaten (CoolProp), Rechner, Einheiten
 │   ├── data/               Startinhalte (Artikel, Kältemittel, Fehlerbilder, Glossar)
 │   ├── ui/                 Oberfläche (PySide6), Theme, Seiten

@@ -9,7 +9,10 @@ def main() -> int:
     from PySide6.QtGui import QFont, QIcon
     from PySide6.QtWidgets import QApplication
 
-    from app.config import APP_NAME, ORGANIZATION, resource_path, user_data_dir
+    from PySide6.QtWidgets import QMessageBox
+
+    from app.config import APP_NAME, ORGANIZATION, data_dir, resource_path, user_data_dir
+    from app.core import local_config, package
     from app.core.db import Database
     from app.data.seed import seed
     from app.ui import theme
@@ -33,11 +36,36 @@ def main() -> int:
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
 
-    data_dir = user_data_dir()
-    db = Database(data_dir / "wissen.db", data_dir / "anhaenge")
+    folder = data_dir()
+    while local_config.get("data_dir") and not folder.is_dir():
+        box = QMessageBox(QMessageBox.Warning, APP_NAME,
+                          f"Der zentrale Speicherort ist nicht erreichbar:\n{folder}\n\n"
+                          "Netzlaufwerk verbunden? VPN aktiv?")
+        retry = box.addButton("Erneut versuchen", QMessageBox.AcceptRole)
+        local = box.addButton("Diesmal lokal starten", QMessageBox.ActionRole)
+        box.addButton("Beenden", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is retry:
+            continue
+        if box.clickedButton() is local:
+            folder = user_data_dir()
+            break
+        return 0
+    try:
+        db = Database(folder / "wissen.db", folder / "anhaenge")
+    except Exception as exc:
+        QMessageBox.critical(None, APP_NAME, f"Die Datenbank konnte nicht geöffnet werden:\n{exc}")
+        return 1
     if db.is_empty() and not db.get_setting("seeded", False):
         seed(db)
         db.set_setting("seeded", True)
+    pending = local_config.get("pending_merge")
+    if pending:
+        local_config.set("pending_merge", None)
+        try:
+            package.import_package(db, pending)
+        except Exception:
+            pass
 
     ctx = AppContext(db)
     mode = db.get_setting("theme", "system")
@@ -47,6 +75,8 @@ def main() -> int:
 
     win = MainWindow(ctx)
     win.show()
+    if local_config.get("assistant_at_start"):
+        win.open_edge()
     code = app.exec()
     db.close()
     return code

@@ -18,7 +18,7 @@ a = Analysis(
     pathex=["."],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["CoolProp.CoolProp", "docx", "pypdf"],
+    hiddenimports=["CoolProp.CoolProp", "docx", "pypdf", "anthropic"],
     excludes=["tkinter", "matplotlib", "numpy.tests", "PySide6.QtWebEngineCore",
               "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "PySide6.QtQuick", "PySide6.QtQml"],
     noarchive=False,
