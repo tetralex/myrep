@@ -19,3 +19,9 @@ Unter Windows und macOS ist Tkinter bei Python dabei. Unter Linux ggf. `sudo apt
 - Überfällige Aufgaben in Rot, heute fällige in Orange
 
 Die Aufgaben werden in `aufgaben.json` neben dem Skript gespeichert.
+
+---
+
+# Kältetechnik-Wissensdatenbank (Windows-App)
+
+Im Ordner [`wissensdatenbank/`](wissensdatenbank/) liegt eine Desktop-App für die Kältetechnik: Wissensartikel, Kältemitteldaten, Rechner, Fehlersuche, Glossar, Notizen und Import von eigenem Wissen (PDF, Word, Bilder, Ordner …). Bauen der `.exe`: `wissensdatenbank\build.bat` doppelklicken – Details im [README](wissensdatenbank/README.md).

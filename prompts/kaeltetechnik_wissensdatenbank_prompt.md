@@ -79,7 +79,13 @@ Sie bündelt Fachwissen, Kältemitteldaten, Rechenhilfen und eigene Notizen an e
 - Schnelle Notizen mit Datum, Anlage/Kunde, Fotos, Messwerten
 - Verknüpfbar mit Artikeln und Kältemitteln
 
-### 8. Daten & Einstellungen
+### 8. Wissen importieren
+- Dateien per Drag & Drop oder Dialog importieren: PDF, Word (.docx), Markdown, Text, HTML, Bilder → werden zu Artikeln (Original als Anhang)
+- Ganze Ordner importieren (Unterordner = Kategorien), CSV für Glossar und Kältemittel
+- Text aus der Zwischenablage als Artikel speichern
+- Wissenspakete (.zip) von Kollegen einspielen und zusammenführen; Optionen für Zielkategorie, Tags und doppelte Titel
+
+### 9. Daten & Einstellungen
 - Export/Import der gesamten Datenbank (ZIP mit JSON + Anhängen), Artikel einzeln als PDF exportieren
 - Automatisches Backup beim Beenden (letzte 10 behalten)
 - Einstellungen: Theme, Schriftgröße, Standard-Druckeinheit, Startseite
