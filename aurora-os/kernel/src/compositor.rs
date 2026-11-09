@@ -29,6 +29,7 @@ pub struct Layer {
     pub y: f32,
     pub w: i32,
     pub h: i32,
+    pub radius: f32,
     pub opacity: f32,
     pub glass: bool,
     pub shadow: bool,
@@ -40,35 +41,102 @@ pub struct Layer {
 
 impl Layer {
     pub fn new(id: u8, w: i32, h: i32, radius: f32, glass: bool, shadow: bool) -> Self {
-        let (wf, hf) = (w as f32, h as f32);
-        let mut mask = vec![0u8; (w * h) as usize];
-        let mut border = vec![0u8; (w * h) as usize];
-        for y in 0..h {
-            for x in 0..w {
-                let d = sdf_rrect(x as f32 + 0.5, y as f32 + 0.5, 0.0, 0.0, wf, hf, radius);
-                mask[(y * w + x) as usize] = ((0.5 - d).clamp(0.0, 1.0) * 255.0) as u8;
-                border[(y * w + x) as usize] = ((1.0 - (d + 0.5).abs()).clamp(0.0, 1.0) * 255.0) as u8;
-            }
+        let mut l = Layer {
+            id,
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+            radius,
+            opacity: 1.0,
+            glass,
+            shadow,
+            content: Image::new(w, h),
+            mask: Vec::new(),
+            border: Vec::new(),
+            shadow_mask: Vec::new(),
+        };
+        l.build_masks();
+        l
+    }
+
+    /// Größe ändern (z. B. beim Ziehen am Fensterrand). Der Inhalt ist danach
+    /// leer und muss neu gerendert werden.
+    pub fn resize(&mut self, w: i32, h: i32) {
+        if w == self.w && h == self.h {
+            return;
         }
-        // Schatten: nach unten versetzt, weich auslaufend – aber nur *außerhalb*
-        // der Karte, sonst schiene er durch das halbtransparente Glas.
-        let mut shadow_mask = Vec::new();
-        if shadow {
-            let (sw, sh) = (w + 2 * SHADOW_PAD, h + 2 * SHADOW_PAD);
-            shadow_mask = vec![0u8; (sw * sh) as usize];
-            let p = SHADOW_PAD as f32;
-            for y in 0..sh {
-                for x in 0..sw {
-                    let (fx, fy) = (x as f32 + 0.5 - p, y as f32 + 0.5 - p);
-                    let d = sdf_rrect(fx, fy - SHADOW_OFFSET_Y as f32, 4.0, 4.0, wf - 8.0, hf - 8.0, radius);
-                    let t = (1.0 - (d + 8.0) / (p + 4.0)).clamp(0.0, 1.0);
-                    let soft = t * t * (3.0 - 2.0 * t);
-                    let inside = (0.5 - sdf_rrect(fx, fy, 0.0, 0.0, wf, hf, radius)).clamp(0.0, 1.0);
-                    shadow_mask[(y * sw + x) as usize] = (soft * (1.0 - inside) * 255.0) as u8;
+        self.w = w.max(1);
+        self.h = h.max(1);
+        self.content = Image::new(self.w, self.h);
+        self.build_masks();
+    }
+
+    /// Form, Lichtkante und Schatten berechnen – schnell genug, um das bei
+    /// jeder Größenänderung (60-mal pro Sekunde) zu tun:
+    /// * Form: innen überall voll, nur die vier Ecken brauchen die Distanzfunktion.
+    /// * Schatten: ein weichgezeichnetes Rechteck ist (fast) das Produkt zweier
+    ///   eindimensionaler Verläufe – für x und für y. Statt w×h Wurzeln also
+    ///   nur w+h Werte und eine Multiplikation pro Pixel.
+    fn build_masks(&mut self) {
+        let (w, h, r) = (self.w, self.h, self.radius);
+        let (wf, hf) = (w as f32, h as f32);
+        self.mask = vec![255u8; (w * h) as usize];
+        self.border = vec![0u8; (w * h) as usize];
+        // gerade Kanten: 1 px Lichtkante
+        for x in 0..w {
+            self.border[x as usize] = 255;
+            self.border[((h - 1) * w + x) as usize] = 255;
+        }
+        for y in 0..h {
+            self.border[(y * w) as usize] = 255;
+            self.border[(y * w + w - 1) as usize] = 255;
+        }
+        // Ecken genau rechnen
+        let rc = (libm::ceilf(r) as i32 + 1).min(w / 2).min(h / 2);
+        for (cx0, cy0) in [(0, 0), (w - rc, 0), (0, h - rc), (w - rc, h - rc)] {
+            for y in cy0..cy0 + rc {
+                for x in cx0..cx0 + rc {
+                    let d = sdf_rrect(x as f32 + 0.5, y as f32 + 0.5, 0.0, 0.0, wf, hf, r);
+                    self.mask[(y * w + x) as usize] = ((0.5 - d).clamp(0.0, 1.0) * 255.0) as u8;
+                    self.border[(y * w + x) as usize] = ((1.0 - (d + 0.5).abs()).clamp(0.0, 1.0) * 255.0) as u8;
                 }
             }
         }
-        Layer { id, x: 0.0, y: 0.0, w, h, opacity: 1.0, glass, shadow, content: Image::new(w, h), mask, border, shadow_mask }
+        self.shadow_mask.clear();
+        if !self.shadow {
+            return;
+        }
+        let p = SHADOW_PAD;
+        let (sw, sh) = (w + 2 * p, h + 2 * p);
+        let blur = p as f32;
+        let smooth = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        // Verlauf eines weichgezeichneten Intervalls [a, b]
+        let profile = |n: i32, a: f32, b: f32| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let c = i as f32 + 0.5;
+                    smooth((c - (a - blur)) / (2.0 * blur)) * smooth(((b + blur) - c) / (2.0 * blur))
+                })
+                .collect()
+        };
+        let fx = profile(sw, p as f32 + 6.0, (p + w) as f32 - 6.0);
+        let fy = profile(sh, (p + SHADOW_OFFSET_Y) as f32 + 6.0, (p + SHADOW_OFFSET_Y + h) as f32 - 6.0);
+        self.shadow_mask = vec![0u8; (sw * sh) as usize];
+        for y in 0..sh {
+            for x in 0..sw {
+                let mut v = fx[x as usize] * fy[y as usize];
+                // nicht unter der (halbtransparenten) Ebene selbst
+                let (lx, ly) = (x - p, y - p);
+                if lx >= 0 && ly >= 0 && lx < w && ly < h {
+                    v *= 1.0 - self.mask[(ly * w + lx) as usize] as f32 / 255.0;
+                }
+                self.shadow_mask[(y * sw + x) as usize] = (v * 255.0) as u8;
+            }
+        }
     }
 
     pub fn rect(&self) -> Rect {
@@ -79,11 +147,6 @@ impl Layer {
     pub fn bounds(&self) -> Rect {
         let r = self.rect();
         if self.shadow { Rect::new(r.x - SHADOW_PAD, r.y - SHADOW_PAD, r.w + 2 * SHADOW_PAD, r.h + 2 * SHADOW_PAD) } else { r }
-    }
-
-    pub fn contains(&self, x: i32, y: i32) -> bool {
-        let r = self.rect();
-        x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h && self.mask[((y - r.y) * self.w + (x - r.x)) as usize] > 128
     }
 }
 
@@ -173,6 +236,24 @@ impl Compositor {
         let new = l.bounds();
         self.damage(old);
         self.damage(new);
+    }
+
+    /// Position, Größe und Deckkraft setzen. Liefert `true`, wenn sich die
+    /// Größe geändert hat (dann muss der Inhalt neu gerendert werden).
+    pub fn set_rect(&mut self, id: u8, x: f32, y: f32, w: i32, h: i32, opacity: f32) -> bool {
+        let Some(i) = self.index_of(id) else { return false };
+        let resized = self.layers[i].w != w || self.layers[i].h != h;
+        if resized {
+            let old = self.layers[i].bounds();
+            self.layers[i].resize(w, h);
+            self.damage(old);
+        }
+        self.set_geometry(id, x, y, opacity);
+        if resized {
+            let b = self.layers[i].bounds();
+            self.damage(b);
+        }
+        resized
     }
 
     /// Ebene ganz nach oben holen (aber unter `below` lassen, z. B. dem Mauszeiger)

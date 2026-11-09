@@ -1,4 +1,4 @@
-//! AuroraOS – Meilenstein 5: Compositor, Vektorschrift, Animationen.
+//! AuroraOS – Meilenstein 6: Fenstersystem mit Dock.
 
 #![no_std]
 #![no_main]
@@ -12,6 +12,7 @@ mod acpi;
 mod allocator;
 mod anim;
 mod apic;
+mod apps;
 mod compositor;
 mod desktop;
 mod entry;

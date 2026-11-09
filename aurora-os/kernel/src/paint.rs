@@ -88,6 +88,28 @@ impl Image {
         }
     }
 
+    /// Einfaches Rechteck ohne Kantenglättung – schnell, z. B. für Diagrammflächen
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgba) {
+        for py in y.max(0)..(y + h).min(self.h) {
+            for px in x.max(0)..(x + w).min(self.w) {
+                self.blend(px, py, c, 1.0);
+            }
+        }
+    }
+
+    /// Abgerundetes Rechteck mit senkrechtem Farbverlauf (für App-Symbole)
+    pub fn fill_rounded_gradient(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, top: Rgba, bottom: Rgba) {
+        let (x0, y0) = (floorf(x) as i32, floorf(y) as i32);
+        let (x1, y1) = (ceilf(x + w) as i32, ceilf(y + h) as i32);
+        for py in y0.max(0)..y1.min(self.h) {
+            let c = top.lerp(bottom, ((py as f32 - y) / h).clamp(0.0, 1.0));
+            for px in x0.max(0)..x1.min(self.w) {
+                let d = sdf_rrect(px as f32 + 0.5, py as f32 + 0.5, x, y, w, h, r);
+                self.blend(px, py, c, 0.5 - d);
+            }
+        }
+    }
+
     /// Umriss eines abgerundeten Rechtecks mit Linienbreite `lw`
     pub fn stroke_rounded(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, lw: f32, c: Rgba) {
         let (x0, y0) = (floorf(x) as i32 - 1, floorf(y) as i32 - 1);

@@ -2,13 +2,13 @@
 
 Ein modernes Hobby-Betriebssystem in Rust (x86_64, UEFI, Limine).
 
-**Stand:** Meilensteine 1–5 fertig: Booten, Exceptions, Speicherverwaltung,
-Timer/Tastatur/Maus und ein Compositor mit Glas-Blur, Vektorschrift (Inter),
-Animationen, Hell/Dunkel-Modus und frei wählbarer Akzentfarbe.
+**Stand:** Meilensteine 1–6 fertig: Booten, Exceptions, Speicherverwaltung,
+Timer/Tastatur/Maus, Compositor mit Glas-Blur und Vektorschrift sowie ein
+Fenstersystem mit Dock und den Apps Uhr, Notizen, Einstellungen und Leistung.
 
-![Meilenstein 5 – dunkel](docs/meilenstein-5-dunkel.png)
+![Meilenstein 6](docs/meilenstein-6.png)
 
-![Meilenstein 5 – hell](docs/meilenstein-5-hell.png)
+![Fenster andocken](docs/meilenstein-6-andocken.png)
 
 ![Fehlerbildschirm](docs/meilenstein-2-pagefault.png)
 
@@ -30,10 +30,15 @@ make debug  # QEMU wartet auf GDB an Port 1234
 
 ## Bedienung
 
-* **Karten verschieben:** am oberen Rand (Titel) mit der Maus ziehen
-* **Hell/Dunkel:** Schalter in „Darstellung“ oder **F2**
-* **Akzentfarbe:** Farbtupfer anklicken oder über der Karte scrollen
-* **Tippen:** deutsches Layout, Esc löscht den Text
+| Aktion | So geht's |
+|---|---|
+| Fenster verschieben | an der Titelleiste ziehen |
+| Größe ändern | an Rand oder Ecke ziehen |
+| Andocken | Fenster an den linken/rechten Rand ziehen (halber Bildschirm), nach oben = maximieren |
+| Schließen / Minimieren / Maximieren | rote / gelbe / grüne Punkte, oder **Strg+W** / **Strg+M** / **F11** |
+| Apps öffnen | Symbol im Dock anklicken (nochmal = minimieren) |
+| Hell/Dunkel | Schalter in den Einstellungen oder **F2** |
+| Akzentfarbe | Farbtupfer in den Einstellungen oder dort scrollen |
 
 ## Struktur
 
@@ -64,7 +69,8 @@ aurora-os/
       ├─ ringbuf.rs         Ringpuffer ohne Sperren
       ├─ time.rs            Ticks, Uhrzeit, Datum
       ├─ io.rs              I/O-Ports
-      ├─ desktop.rs         Desktop: Karten, Eingaben, Animationen
+      ├─ desktop.rs         Fenstermanager, Dock, Menüleiste, Eingaben
+      ├─ apps.rs            Apps (Uhr, Notizen, Einstellungen, Leistung) + Symbole
       ├─ compositor.rs      Ebenen, Schatten, Glas-Blur, Damage-Tracking
       ├─ paint.rs           Zeichnen mit Alphakanal (Gleitkomma/SSE)
       ├─ font.rs            Vektorschrift Inter (fontdue) + Glyphen-Cache

@@ -95,7 +95,7 @@ pub fn boot_screen(r: &BootReport) {
     let (lx, ly) = (cx + 40, cy + 36);
     logo(&mut c, lx, ly, 56, ACCENT, ACCENT_2, "A");
     c.text(lx + 80, ly + 2, "AuroraOS", BOLD, RasterHeight::Size32, TEXT);
-    c.text(lx + 80, ly + 36, "Meilenstein 5 · Compositor & Vektorschrift", REG, R, ACCENT);
+    c.text(lx + 80, ly + 36, "Meilenstein 6 · Fenster & Dock", REG, R, ACCENT);
 
     let mut y = cy + 128;
     for (label, value) in &r.info {
