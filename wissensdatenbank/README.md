@@ -6,7 +6,7 @@ Moderne Desktop-App für Windows 10/11, die komplett offline läuft: Fachartikel
 
 ## .exe bauen (Windows)
 
-1. **Python 3.12** von [python.org](https://www.python.org/downloads/) installieren und beim Setup **„Add python.exe to PATH“** anhaken.
+1. **Python 3.12 oder 3.13** von [python.org](https://www.python.org/downloads/) installieren und beim Setup **„Add python.exe to PATH“** anhaken.
 2. Den Ordner `wissensdatenbank` auf den PC kopieren.
 3. **`build.bat` doppelklicken.** Das Skript
    - legt eine virtuelle Umgebung `.venv` an,

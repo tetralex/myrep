@@ -8,9 +8,10 @@ echo.
 echo  ===  Kaeltetechnik-Wissensdatenbank: .exe bauen  ===
 echo.
 
-rem --- Python suchen (bevorzugt 3.12) ---
+rem --- Python suchen (3.13 oder 3.12) ---
 set "PY="
-where py >nul 2>nul && (py -3.12 -c "import sys" >nul 2>nul && set "PY=py -3.12")
+where py >nul 2>nul && (py -3.13 -c "import sys" >nul 2>nul && set "PY=py -3.13")
+if not defined PY (where py >nul 2>nul && (py -3.12 -c "import sys" >nul 2>nul && set "PY=py -3.12"))
 if not defined PY (where py >nul 2>nul && set "PY=py -3")
 if not defined PY (where python >nul 2>nul && set "PY=python")
 if not defined PY (
