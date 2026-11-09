@@ -51,6 +51,16 @@ impl Image {
         Image { w, h, px: vec![0; (w.max(1) * h.max(1)) as usize] }
     }
 
+    /// Inhalt eines anders großen Bildes übernehmen (oben links ausgerichtet)
+    pub fn copy_from(&mut self, src: &Image) {
+        self.clear();
+        let (w, h) = (self.w.min(src.w), self.h.min(src.h));
+        for y in 0..h {
+            let (d, s) = ((y * self.w) as usize, (y * src.w) as usize);
+            self.px[d..d + w as usize].copy_from_slice(&src.px[s..s + w as usize]);
+        }
+    }
+
     pub fn clear(&mut self) {
         self.px.fill(0);
     }

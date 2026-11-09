@@ -2,13 +2,14 @@
 
 Ein modernes Hobby-Betriebssystem in Rust (x86_64, UEFI, Limine).
 
-**Stand:** Meilensteine 1–6 fertig: Booten, Exceptions, Speicherverwaltung,
-Timer/Tastatur/Maus, Compositor mit Glas-Blur und Vektorschrift sowie ein
-Fenstersystem mit Dock und den Apps Uhr, Notizen, Einstellungen und Leistung.
+**Stand:** Meilensteine 1–7 fertig: Booten, Exceptions, Speicherverwaltung,
+Timer/Tastatur/Maus, Compositor mit Glas-Blur und Vektorschrift, Fenstersystem
+mit Dock und präemptives Multitasking (jede App rendert in ihrem eigenen Thread,
+Task-Manager „Prozesse“, Thread-Stacks mit Guard-Page).
 
-![Meilenstein 6](docs/meilenstein-6.png)
+![Meilenstein 7 – Rechenlast bei flüssiger Oberfläche](docs/meilenstein-7.png)
 
-![Fenster andocken](docs/meilenstein-6-andocken.png)
+![Prozesse](docs/meilenstein-7-prozesse.png)
 
 ![Fehlerbildschirm](docs/meilenstein-2-pagefault.png)
 
@@ -39,6 +40,7 @@ make debug  # QEMU wartet auf GDB an Port 1234
 | Apps öffnen | Symbol im Dock anklicken (nochmal = minimieren) |
 | Hell/Dunkel | Schalter in den Einstellungen oder **F2** |
 | Akzentfarbe | Farbtupfer in den Einstellungen oder dort scrollen |
+| Lasttest | in „Prozesse“ auf „Rechenlast starten“, mit × wieder beenden |
 
 ## Struktur
 
@@ -70,7 +72,10 @@ aurora-os/
       ├─ time.rs            Ticks, Uhrzeit, Datum
       ├─ io.rs              I/O-Ports
       ├─ desktop.rs         Fenstermanager, Dock, Menüleiste, Eingaben
-      ├─ apps.rs            Apps (Uhr, Notizen, Einstellungen, Leistung) + Symbole
+      ├─ apps.rs            Apps (Uhr, Notizen, Einstellungen, Leistung, Prozesse)
+      ├─ appthread.rs       ein Render-Thread pro App, Austausch per Briefkasten
+      ├─ task.rs            Threads, präemptiver Scheduler, Kontextwechsel
+      ├─ workers.rs         Rechen-Threads (Primzahlen) für den Lasttest
       ├─ compositor.rs      Ebenen, Schatten, Glas-Blur, Damage-Tracking
       ├─ paint.rs           Zeichnen mit Alphakanal (Gleitkomma/SSE)
       ├─ font.rs            Vektorschrift Inter (fontdue) + Glyphen-Cache

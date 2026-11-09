@@ -60,15 +60,18 @@ impl Layer {
         l
     }
 
-    /// Größe ändern (z. B. beim Ziehen am Fensterrand). Der Inhalt ist danach
-    /// leer und muss neu gerendert werden.
+    /// Größe ändern (z. B. beim Ziehen am Fensterrand). Der alte Inhalt wird
+    /// übernommen, bis die App ein neues Bild in der richtigen Größe liefert.
     pub fn resize(&mut self, w: i32, h: i32) {
         if w == self.w && h == self.h {
             return;
         }
         self.w = w.max(1);
         self.h = h.max(1);
-        self.content = Image::new(self.w, self.h);
+        // alten Inhalt behalten, bis der neue fertig ist (kein Flackern)
+        let mut content = Image::new(self.w, self.h);
+        content.copy_from(&self.content);
+        self.content = content;
         self.build_masks();
     }
 

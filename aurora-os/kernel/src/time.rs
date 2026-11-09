@@ -24,11 +24,9 @@ pub fn ticks() -> u64 {
 
 /// Schlafen, bis `ms` Millisekunden vergangen sind. `hlt` hält die CPU an,
 /// bis der nächste Interrupt kommt – spart Strom statt leer zu kreisen.
+/// Mit Scheduler: der Thread schläft, andere rechnen weiter.
 pub fn sleep_ms(ms: u64) {
-    let end = ticks() + ms * HZ / 1000;
-    while ticks() < end {
-        x86_64::instructions::interrupts::enable_and_hlt();
-    }
+    crate::task::sleep_ms(ms * HZ / 1000);
 }
 
 pub struct DateTime {

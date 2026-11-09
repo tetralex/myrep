@@ -11,9 +11,9 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use fontdue::{Font, FontSettings};
 use libm::roundf;
-use spin::Mutex;
 
 use crate::paint::{Image, Rgba};
+use crate::task::ThreadMutex;
 
 static INTER_REGULAR: &[u8] = include_bytes!("../fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../fonts/Inter-SemiBold.ttf");
@@ -40,7 +40,8 @@ struct Fonts {
     cache: BTreeMap<(Weight, char, u32), Glyph>,
 }
 
-static FONTS: Mutex<Option<Fonts>> = Mutex::new(None);
+// Mehrere App-Threads rastern gleichzeitig -> Sperre mit „yield“ beim Warten
+static FONTS: ThreadMutex<Option<Fonts>> = ThreadMutex::new(None);
 
 pub fn init() -> Result<usize, &'static str> {
     let load = |data: &'static [u8]| Font::from_bytes(data, FontSettings::default()).map_err(|_| "Schrift defekt");

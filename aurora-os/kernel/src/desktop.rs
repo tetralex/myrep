@@ -15,7 +15,9 @@ use core::sync::atomic::Ordering;
 use pc_keyboard::{DecodedKey, HandleControl, KeyCode, KeyState, PS2Keyboard, ScancodeSet1, layouts::De105Key};
 
 use crate::anim::{Tween, ease_in_out_cubic, ease_out_cubic};
-use crate::apps::{self, AppKind, Ctx, Notes, TITLE_H};
+use crate::apps::{self, AppKind, Notes, Snapshot, TITLE_H, TaskRow};
+use crate::task::{self, Prio};
+use crate::{appthread, workers};
 use crate::compositor::{Compositor, Layer};
 use crate::font::{self, Weight};
 use crate::interrupts::{KEYBOARD_BYTES, KEYBOARD_IRQS, MOUSE_BYTES, MOUSE_IRQS};
@@ -140,6 +142,9 @@ pub struct Desktop {
     shown_caret: bool,
     monitor_tick: u64,
     chrome_dirty: bool,
+    task_rows: Vec<TaskRow>,
+    prev_ticks: Vec<(u64, u64)>,
+    cpu: f32,
 }
 
 impl Desktop {
@@ -214,6 +219,9 @@ impl Desktop {
             shown_caret: false,
             monitor_tick: 0,
             chrome_dirty: true,
+            task_rows: Vec::new(),
+            prev_ticks: Vec::new(),
+            cpu: 0.0,
         };
         // Startfenster
         d.open(AppKind::Clock, now + 300, Some([60.0, 84.0, 420.0, 230.0]));
@@ -260,13 +268,16 @@ impl Desktop {
             return;
         }
         let (dw, dh) = app.default_size();
-        let rect = at.unwrap_or([((self.w - dw) / 2) as f32, ((self.h - dh) / 2 - 20) as f32, dw as f32, dh as f32]);
+        // Kaskade: jedes neue Fenster etwas versetzt, damit es keines verdeckt
+        let k = (self.windows.len() % 5) as i32 * 28 - 56;
+        let rect = at.unwrap_or([((self.w - dw) / 2 + k) as f32, ((self.h - dh) / 2 - 20 + k / 2).max(64) as f32, dw as f32, dh as f32]);
         let mut layer = Layer::new(app.layer_id(), rect[2] as i32, rect[3] as i32, 14.0, true, true);
         layer.x = rect[0];
         layer.y = rect[1] + 24.0;
         layer.opacity = 0.0;
         let pos = self.comp.layers.iter().position(|l| OVERLAYS.contains(&l.id)).unwrap_or(self.comp.layers.len());
         self.comp.layers.insert(pos, layer);
+        appthread::start(app);
         let from = [rect[0], rect[1] + 24.0, rect[2], rect[3]];
         self.windows.push(Window {
             app,
@@ -688,6 +699,19 @@ impl Desktop {
     }
 
     fn click_app(&mut self, app: AppKind, x: f32, y: f32, now: u64) {
+        if app == AppKind::Tasks {
+            let w = self.win_ref(app).map(|w| w.rect[2]).unwrap_or(0.0);
+            let (bx, by, bw, bh) = apps::tasks_button_rect(w);
+            if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
+                workers::start_worker();
+            } else if let Some(row) = apps::tasks_kill_hit(w, x, y) {
+                if let Some(t) = self.task_rows.get(row).filter(|t| t.killable) {
+                    task::kill(t.id);
+                }
+            }
+            self.update_task_stats(1000);
+            return;
+        }
         if app != AppKind::Settings {
             return;
         }
@@ -859,6 +883,7 @@ impl Desktop {
             }
         }
         for app in removed {
+            appthread::stop(app);
             self.windows.retain(|w| w.app != app);
             self.comp.remove(app.layer_id());
             self.chrome_dirty = true;
@@ -888,7 +913,9 @@ impl Desktop {
         let (ox, oy) = if self.cursor_kind == CursorKind::Arrow { (0, 0) } else { (12, 12) };
         self.comp.set_geometry(CURSOR, (self.mx - ox) as f32, (self.my - oy) as f32, 1.0);
 
-        // Inhalte neu rendern
+        self.collect_results();
+
+        // Inhalte neu anfordern
         let p = self.comp.palette;
         let heap = allocator::stats();
         for i in 0..self.windows.len() {
@@ -904,56 +931,70 @@ impl Desktop {
         }
     }
 
+    /// Auftrag an den App-Thread: „Zeichne dein Fenster in dieser Größe“
     fn render_window(&mut self, i: usize, p: &Palette, now: u64, heap: (usize, usize)) {
         let app = self.windows[i].app;
-        let id = app.layer_id();
-        let Some(l) = self.comp.layer(id) else { return };
-        let mut img = core::mem::replace(&mut l.content, Image::new(1, 1));
-        img.clear();
-        let focused = self.focus == Some(app);
-
-        // Titelleiste: drei Punkte links, Titel in der Mitte
-        let w = img.w as f32;
-        let colors = [0xFF5F57, 0xFEBC2E, 0x28C840];
-        for (k, c) in colors.iter().enumerate() {
-            let cx = 22.0 + k as f32 * 20.0;
-            let col = if focused || self.hover_dots == Some(app) { Rgba::hex(*c) } else { p.control };
-            img.circle(cx, 20.0, 6.0, col);
-            if self.hover_dots == Some(app) {
-                let dark = Rgba::hex(0x000000).with_alpha(150);
-                match k {
-                    0 => {
-                        img.line(cx - 2.5, 17.5, cx + 2.5, 22.5, 1.3, dark);
-                        img.line(cx + 2.5, 17.5, cx - 2.5, 22.5, 1.3, dark);
-                    }
-                    1 => img.line(cx - 3.0, 20.0, cx + 3.0, 20.0, 1.4, dark),
-                    _ => {
-                        img.line(cx - 3.0, 20.0, cx + 3.0, 20.0, 1.3, dark);
-                        img.line(cx, 17.0, cx, 23.0, 1.3, dark);
-                    }
-                }
-            }
-        }
-        let title_col = if focused { p.text } else { p.text_muted };
-        img.text_centered(w / 2.0, 25.0, app.title(), 13.0, Weight::SemiBold, title_col);
-        img.line(0.0, TITLE_H - 0.5, w, TITLE_H - 0.5, 1.0, p.well_border);
-
-        let ctx = Ctx {
-            p,
+        let Some(l) = self.comp.layer(app.layer_id()) else { return };
+        let (w, h) = (l.w, l.h);
+        let snap = Snapshot {
+            p: *p,
             dark_knob: 1.0 - self.light.value(now),
             accent_idx: self.accent_idx,
             fps: self.fps,
-            frame_times: &self.frame_times,
+            cpu: self.cpu,
+            frame_times: self.frame_times.iter().copied().collect(),
             caret_on: self.shown_caret,
-            focused,
-            notes: &self.notes,
+            focused: self.focus == Some(app),
+            hover_dots: self.hover_dots == Some(app),
+            notes: self.notes.clone(),
             heap,
+            tasks: self.task_rows.clone(),
+            switches: task::SWITCHES.load(Ordering::Relaxed),
+            primes: (workers::PRIMES_FOUND.load(Ordering::Relaxed), workers::LARGEST_PRIME.load(Ordering::Relaxed)),
         };
-        apps::draw(app, &mut img, &ctx);
-        if let Some(l) = self.comp.layer(id) {
-            l.content = img;
+        appthread::request(app, w, h, snap);
+    }
+
+    /// Fertige Bilder der App-Threads abholen
+    fn collect_results(&mut self) {
+        for i in 0..self.windows.len() {
+            let app = self.windows[i].app;
+            let Some(img) = appthread::take_result(app) else { continue };
+            let id = app.layer_id();
+            let Some(l) = self.comp.layer(id) else { continue };
+            if img.w == l.w && img.h == l.h {
+                l.content = img;
+            } else {
+                // Fenster hat inzwischen die Größe geändert: Bild trotzdem
+                // zeigen (zugeschnitten) und gleich ein neues anfordern
+                l.content.copy_from(&img);
+                self.windows[i].dirty = true;
+            }
+            self.comp.damage_layer(id);
         }
-        self.comp.damage_layer(id);
+    }
+
+    /// Einmal pro Sekunde: CPU-Anteil jedes Threads aus den verbrauchten Ticks
+    fn update_task_stats(&mut self, elapsed_ms: u64) {
+        let infos = task::snapshot();
+        let mut rows = Vec::new();
+        let mut idle = 0.0;
+        for t in &infos {
+            let prev = self.prev_ticks.iter().find(|(id, _)| *id == t.id).map(|(_, v)| *v).unwrap_or(t.ticks);
+            let cpu = ((t.ticks - prev) as f32 * 100.0 / elapsed_ms.max(1) as f32).min(100.0);
+            if t.prio == Prio::Idle {
+                idle = cpu;
+            }
+            rows.push(TaskRow { id: t.id, name: t.name.clone(), state: t.state, prio: t.prio, cpu, killable: t.killable });
+        }
+        self.prev_ticks = infos.iter().map(|t| (t.id, t.ticks)).collect();
+        self.cpu = (100.0 - idle).clamp(0.0, 100.0);
+        self.task_rows = rows;
+        for w in &mut self.windows {
+            if matches!(w.app, AppKind::Tasks | AppKind::Monitor) {
+                w.dirty = true;
+            }
+        }
     }
 
     fn render_topbar(&mut self, p: &Palette) {
@@ -1051,17 +1092,21 @@ impl Desktop {
                 }
                 self.frames_in_second += 1;
                 if now - self.second_start >= 1000 {
+                    task::reap();
+                    self.update_task_stats(now - self.second_start);
                     self.fps = self.frames_in_second;
                     self.frames_in_second = 0;
                     self.second_start = now;
                     self.chrome_dirty = true;
                     crate::serial_println!(
-                        "[aurora] {} FPS, Bildzeit {:.2} ms, {} Pixel, {} Fenster, {} Zeichen im Cache, IRQs {}/{}",
+                        "[aurora] {} FPS, Bildzeit {:.2} ms, {} Pixel, {} Fenster, {} Zeichen, CPU {:.0} %, {} Threads, IRQs {}/{}",
                         self.fps,
                         ms,
                         self.comp.last_pixels,
                         self.windows.len(),
                         font::cached_glyphs(),
+                        self.cpu,
+                        self.task_rows.len(),
                         KEYBOARD_IRQS.load(Ordering::Relaxed),
                         MOUSE_IRQS.load(Ordering::Relaxed)
                     );
@@ -1071,7 +1116,8 @@ impl Desktop {
                     frame = (time::ticks() - start) * 60 / 1000;
                 }
             }
-            x86_64::instructions::interrupts::enable_and_hlt();
+            // bis zum nächsten Bild schlafen – andere Threads rechnen solange
+            task::sleep_until(start + frame * 1000 / 60);
         }
     }
 }

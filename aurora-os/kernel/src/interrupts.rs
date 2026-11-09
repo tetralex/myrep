@@ -13,7 +13,7 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 
 use crate::io::inb;
 use crate::ringbuf::RingBuffer;
-use crate::{apic, fmt, gdt, screens, serial_println, time};
+use crate::{apic, fmt, gdt, screens, serial_println, task};
 
 static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
     let mut idt = InterruptDescriptorTable::new();
@@ -23,7 +23,12 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
     idt.general_protection_fault.set_handler_fn(general_protection_fault);
     idt.page_fault.set_handler_fn(page_fault);
     // Hardware-Interrupts (Vektoren ab 0x20; 0–31 sind für CPU-Exceptions reserviert)
-    idt[apic::TIMER_VECTOR].set_handler_fn(timer);
+    unsafe {
+        // Timer und „yield“ springen in unseren Assembler-Stub: der kann den
+        // Thread wechseln (siehe task.rs)
+        idt[apic::TIMER_VECTOR].set_handler_addr(task::timer_stub_addr());
+        idt[task::YIELD_VECTOR].set_handler_addr(task::yield_stub_addr());
+    }
     idt[apic::KEYBOARD_VECTOR].set_handler_fn(keyboard);
     idt[apic::MOUSE_VECTOR].set_handler_fn(mouse);
     idt[apic::SPURIOUS_VECTOR].set_handler_fn(spurious);
@@ -44,7 +49,7 @@ pub fn init() {
 
 /// Anzahl der Exceptions bzw. Hardware-Interrupts mit eigenem Handler
 pub const HANDLER_COUNT: usize = 6;
-pub const IRQ_COUNT: usize = 3;
+pub const IRQ_COUNT: usize = 4;
 
 // Rohdaten von Tastatur und Maus – die Handler legen nur Bytes ab,
 // ausgewertet wird später in der Hauptschleife.
@@ -68,10 +73,6 @@ extern "x86-interrupt" fn breakpoint(frame: InterruptStackFrame) {
 // Während ein Handler läuft, sind weitere Interrupts gesperrt. Deshalb:
 // kein Zeichnen, kein Heap, keine Sperren – nur Daten abholen und EOI senden.
 
-extern "x86-interrupt" fn timer(_frame: InterruptStackFrame) {
-    time::TICKS.fetch_add(1, Ordering::Relaxed);
-    apic::eoi();
-}
 
 extern "x86-interrupt" fn keyboard(_frame: InterruptStackFrame) {
     let byte = unsafe { inb(0x60) };
@@ -125,6 +126,17 @@ extern "x86-interrupt" fn page_fault(frame: InterruptStackFrame, code: PageFault
     };
     let addr_s = fmt!("{:#018x}", addr);
     let kind_s = fmt!("{} · {}", access, reason);
+    let mut owner = crate::fmtbuf::LineBuf::new();
+    if task::guard_page_owner(addr, &mut owner) {
+        let cause = fmt!("Stack-Überlauf in Thread „{}“", owner.as_str());
+        fatal(
+            "Stack-Überlauf",
+            "Ein Thread hat seinen Stack überschritten und die Guard-Page getroffen.",
+            &frame,
+            Some(code.bits()),
+            &[("Ursache", cause.as_str()), ("Adresse (CR2)", addr_s.as_str())],
+        );
+    }
     let desc = if code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
         "Die Seite existiert, erlaubt diesen Zugriff aber nicht (#PF)."
     } else {
@@ -140,6 +152,21 @@ extern "x86-interrupt" fn page_fault(frame: InterruptStackFrame, code: PageFault
 }
 
 extern "x86-interrupt" fn double_fault(frame: InterruptStackFrame, code: u64) -> ! {
+    // Häufigste Ursache bei Threads: Stack voll -> Guard-Page -> der Page
+    // Fault kann nicht einmal mehr abgelegt werden -> Double Fault
+    let cr2 = Cr2::read_raw();
+    let mut owner = crate::fmtbuf::LineBuf::new();
+    if task::guard_page_owner(cr2, &mut owner) {
+        let cause = fmt!("Stack-Überlauf in Thread „{}“", owner.as_str());
+        let addr_s = fmt!("{:#018x}", cr2);
+        fatal(
+            "Stack-Überlauf (Double Fault)",
+            "Ein Thread hat seinen Stack überschritten und die Guard-Page getroffen.",
+            &frame,
+            Some(code),
+            &[("Ursache", cause.as_str()), ("Adresse (CR2)", addr_s.as_str())],
+        );
+    }
     fatal(
         "Double Fault",
         "Beim Behandeln einer Exception trat eine weitere auf (#DF).",

@@ -1,4 +1,4 @@
-//! AuroraOS – Meilenstein 6: Fenstersystem mit Dock.
+//! AuroraOS – Meilenstein 7: Multitasking mit präemptivem Scheduler.
 
 #![no_std]
 #![no_main]
@@ -13,6 +13,7 @@ mod allocator;
 mod anim;
 mod apic;
 mod apps;
+mod appthread;
 mod compositor;
 mod desktop;
 mod entry;
@@ -30,9 +31,11 @@ mod ringbuf;
 mod screens;
 mod selftest;
 mod serial;
+mod task;
 mod theme;
 mod time;
 mod wallpaper;
+mod workers;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
@@ -43,7 +46,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use limine::request::{
     BootloaderInfoRequest, DateAtBootRequest, ExecutableCmdlineRequest, FramebufferRequest, HhdmRequest, MemmapRequest,
-    RsdpRequest,
+    RsdpRequest, StackSizeRequest,
 };
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 use selftest::SelfTest;
@@ -78,6 +81,11 @@ static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
 #[used]
 #[unsafe(link_section = ".limine_requests")]
 static MEMMAP_REQUEST: MemmapRequest = MemmapRequest::new();
+
+/// Größerer Start-Stack (wird zum Stack des UI-Threads)
+#[used]
+#[unsafe(link_section = ".limine_requests")]
+static STACK_REQUEST: StackSizeRequest = StackSizeRequest::new(256 * 1024);
 
 /// Adresse der ACPI-Wurzeltabelle (RSDP)
 #[used]
@@ -165,6 +173,12 @@ unsafe extern "C" fn kmain() -> ! {
     let tsc = time::calibrate_tsc();
     serial_println!("[aurora] TSC: {} Takte pro Mikrosekunde", tsc);
 
+    // --- Multitasking -------------------------------------------------------
+    // Ab hier ist dieser Code selbst ein Thread („Fenstermanager“).
+    task::init("Fenstermanager (UI)");
+    let (sched_ok, preempt_ok) = scheduler_selftest();
+    serial_println!("[aurora] Scheduler aktiv: Wechsel {}, Präemption {}", sched_ok, preempt_ok);
+
     // --- Selbsttests --------------------------------------------------------
     let mut tests = vec![
         SelfTest { label: format!("GDT, TSS und IDT ({} Handler + {} IRQs)", interrupts::HANDLER_COUNT, interrupts::IRQ_COUNT), ok: true },
@@ -181,6 +195,9 @@ unsafe extern "C" fn kmain() -> ! {
     let sse = x86_64::registers::control::Cr4::read().contains(x86_64::registers::control::Cr4Flags::OSFXSR);
     let x = core::hint::black_box(2.25f32);
     tests.push(SelfTest { label: format!("SSE aktiv, Gleitkomma in Hardware ({}² = {})", x, x * x), ok: sse && x * x == 5.0625 });
+    tests.push(SelfTest { label: "Scheduler: Threads wechseln sich ab (yield)".into(), ok: sched_ok });
+    tests.push(SelfTest { label: "Präemption: Endlosschleife wird unterbrochen".into(), ok: preempt_ok });
+    tests.push(SelfTest { label: "Thread-Stacks mit Guard-Page (64 KiB)".into(), ok: task::guard_pages_ok() });
     tests.push(SelfTest {
         label: match font_glyphs {
             Ok(n) => format!("Vektorschrift Inter geladen ({} Zeichen)", n),
@@ -221,6 +238,35 @@ unsafe extern "C" fn kmain() -> ! {
     desktop::Desktop::new(&ps2).run();
 }
 
+/// Testet den Scheduler: (1) Abwechseln per yield, (2) Präemption.
+fn scheduler_selftest() -> (bool, bool) {
+    use core::sync::atomic::{AtomicBool, AtomicU64};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    static SPIN: AtomicU64 = AtomicU64::new(0);
+    static STOP: AtomicBool = AtomicBool::new(false);
+
+    task::spawn_system("Selbsttest", task::Prio::High, || {
+        for _ in 0..5 {
+            COUNTER.fetch_add(1, Ordering::Relaxed);
+            task::yield_now();
+        }
+    });
+    // Endlosschleife mit normaler Priorität – gibt nie freiwillig ab
+    task::spawn_system("Präemption-Test", task::Prio::Normal, || {
+        while !STOP.load(Ordering::Relaxed) {
+            SPIN.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    task::sleep_ms(40);
+    // Dass wir hier überhaupt weiterlaufen, beweist die Präemption:
+    // Der Timer hat die Endlosschleife unterbrochen und uns geweckt.
+    let preempt = SPIN.load(Ordering::Relaxed) > 0;
+    STOP.store(true, Ordering::Relaxed);
+    task::sleep_ms(20);
+    task::reap();
+    (COUNTER.load(Ordering::Relaxed) == 5, preempt)
+}
+
 /// Löst absichtlich verschiedene Exceptions aus.
 fn crash_test(kind: &str) {
     unsafe {
@@ -243,6 +289,11 @@ fn crash_test(kind: &str) {
                 core::ptr::read_volatile(0x8000_0000_0000_0000u64 as *const u64);
             }
             "panic" => panic!("Test-Panic aus dem Limine-Menü"),
+            // Thread mit endloser Rekursion: läuft in seine Guard-Page
+            "stack" => {
+                workers::start_stack_overflow();
+                task::sleep_ms(2000);
+            }
             // Mehr Speicher anfordern, als der Heap hat -> Allocation-Fehler -> Panic
             "oom" => {
                 let big: Vec<u8> = vec![0; 256 * 1024 * 1024];

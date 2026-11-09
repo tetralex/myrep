@@ -2,7 +2,6 @@
 //! Jede App zeichnet nur ihren Inhaltsbereich (unterhalb der Titelleiste);
 //! Titelleiste, Rahmen und Schatten kommen vom Fenstermanager.
 
-use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -10,6 +9,7 @@ use libm::{cosf, sinf};
 
 use crate::font::{self, Weight};
 use crate::paint::{Image, Rgba};
+use crate::task::{Prio, State};
 use crate::theme::{ACCENTS, Palette};
 use crate::time;
 
@@ -21,10 +21,11 @@ pub enum AppKind {
     Notes,
     Settings,
     Monitor,
+    Tasks,
 }
 
 impl AppKind {
-    pub const ALL: [AppKind; 4] = [AppKind::Clock, AppKind::Notes, AppKind::Settings, AppKind::Monitor];
+    pub const ALL: [AppKind; 5] = [AppKind::Clock, AppKind::Notes, AppKind::Settings, AppKind::Monitor, AppKind::Tasks];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -32,6 +33,7 @@ impl AppKind {
             AppKind::Notes => "Notizen",
             AppKind::Settings => "Einstellungen",
             AppKind::Monitor => "Leistung",
+            AppKind::Tasks => "Prozesse",
         }
     }
 
@@ -40,7 +42,8 @@ impl AppKind {
             AppKind::Clock => (420, 230),
             AppKind::Notes => (560, 380),
             AppKind::Settings => (420, 320),
-            AppKind::Monitor => (440, 320),
+            AppKind::Monitor => (440, 360),
+            AppKind::Tasks => (540, 420),
         }
     }
 
@@ -57,33 +60,83 @@ impl AppKind {
     }
 }
 
-/// Alles, was die Apps zum Zeichnen brauchen
-pub struct Ctx<'a> {
-    pub p: &'a Palette,
+/// Eine Zeile in der Prozesse-App
+#[derive(Clone)]
+pub struct TaskRow {
+    pub id: u64,
+    pub name: String,
+    pub state: State,
+    pub prio: Prio,
+    pub cpu: f32, // Prozent
+    pub killable: bool,
+}
+
+/// Alles, was eine App zum Zeichnen braucht – als *Kopie*, denn die App
+/// zeichnet in ihrem eigenen Thread, während der Fenstermanager weiterläuft.
+#[derive(Clone)]
+pub struct Snapshot {
+    pub p: Palette,
     pub dark_knob: f32, // 1 = dunkel (Schalterstellung, animiert)
     pub accent_idx: usize,
     pub fps: u32,
-    pub frame_times: &'a VecDeque<f32>,
+    pub cpu: f32,
+    pub frame_times: Vec<f32>,
     pub caret_on: bool,
     pub focused: bool,
-    pub notes: &'a Notes,
+    pub hover_dots: bool,
+    pub notes: Notes,
     pub heap: (usize, usize),
+    pub tasks: Vec<TaskRow>,
+    pub switches: u64,
+    pub primes: (u64, u64),
 }
 
-pub fn draw(app: AppKind, img: &mut Image, c: &Ctx) {
+/// Ganzes Fenster zeichnen: Titelleiste + Inhalt
+pub fn draw(app: AppKind, img: &mut Image, c: &Snapshot) {
+    draw_chrome(app, img, c);
     match app {
         AppKind::Clock => draw_clock(img, c),
         AppKind::Notes => draw_notes(img, c),
         AppKind::Settings => draw_settings(img, c),
         AppKind::Monitor => draw_monitor(img, c),
+        AppKind::Tasks => draw_tasks(img, c),
     }
+}
+
+/// Titelleiste: drei Punkte links, Titel in der Mitte
+fn draw_chrome(app: AppKind, img: &mut Image, c: &Snapshot) {
+    let p = &c.p;
+    let w = img.w as f32;
+    let colors = [0xFF5F57, 0xFEBC2E, 0x28C840];
+    for (k, col) in colors.iter().enumerate() {
+        let cx = 22.0 + k as f32 * 20.0;
+        let fill = if c.focused || c.hover_dots { Rgba::hex(*col) } else { p.control };
+        img.circle(cx, 20.0, 6.0, fill);
+        if c.hover_dots {
+            let dark = Rgba::hex(0x000000).with_alpha(150);
+            match k {
+                0 => {
+                    img.line(cx - 2.5, 17.5, cx + 2.5, 22.5, 1.3, dark);
+                    img.line(cx + 2.5, 17.5, cx - 2.5, 22.5, 1.3, dark);
+                }
+                1 => img.line(cx - 3.0, 20.0, cx + 3.0, 20.0, 1.4, dark),
+                _ => {
+                    img.line(cx - 3.0, 20.0, cx + 3.0, 20.0, 1.3, dark);
+                    img.line(cx, 17.0, cx, 23.0, 1.3, dark);
+                }
+            }
+        }
+    }
+    let title_col = if c.focused { p.text } else { p.text_muted };
+    img.text_centered(w / 2.0, 25.0, app.title(), 13.0, Weight::SemiBold, title_col);
+    img.line(0.0, TITLE_H - 0.5, w, TITLE_H - 0.5, 1.0, p.well_border);
 }
 
 // ---------------------------------------------------------------------------
 // Uhr – passt die Schriftgröße der Fenstergröße an
 // ---------------------------------------------------------------------------
 
-fn draw_clock(img: &mut Image, c: &Ctx) {
+fn draw_clock(img: &mut Image, c: &Snapshot) {
     let (w, h) = (img.w as f32, img.h as f32);
     let t = time::now();
     let clock = format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
@@ -115,6 +168,7 @@ fn draw_clock(img: &mut Image, c: &Ctx) {
 // Notizen – kleiner Texteditor mit beweglichem Cursor
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct Notes {
     pub text: String,
     pub caret: usize, // Byte-Position im Text
@@ -165,7 +219,7 @@ impl Notes {
     }
 }
 
-fn draw_notes(img: &mut Image, c: &Ctx) {
+fn draw_notes(img: &mut Image, c: &Snapshot) {
     let (w, h) = (img.w as f32, img.h as f32);
     let size = 15.0;
     let line_h = 22.0;
@@ -231,7 +285,7 @@ pub fn settings_swatch_center(i: usize) -> (f32, f32) {
     (24.0 + 14.0 + i as f32 * 44.0, TITLE_H + 112.0)
 }
 
-fn draw_settings(img: &mut Image, c: &Ctx) {
+fn draw_settings(img: &mut Image, c: &Snapshot) {
     let w = img.w as f32;
     let p = c.p;
     img.text(24.0, TITLE_H + 43.0, "Dunkler Modus", 15.0, Weight::Regular, p.text);
@@ -271,20 +325,20 @@ fn draw_settings(img: &mut Image, c: &Ctx) {
 // Leistung
 // ---------------------------------------------------------------------------
 
-fn draw_monitor(img: &mut Image, c: &Ctx) {
+fn draw_monitor(img: &mut Image, c: &Snapshot) {
     let (w, h) = (img.w as f32, img.h as f32);
     let p = c.p;
     let fps = format!("{}", c.fps);
     let fw = img.text(24.0, TITLE_H + 50.0, &fps, 40.0, Weight::SemiBold, p.text);
     img.text(24.0 + fw + 6.0, TITLE_H + 50.0, "FPS", 15.0, Weight::Regular, p.text_muted);
-    let last = c.frame_times.back().copied().unwrap_or(0.0);
+    let last = c.frame_times.last().copied().unwrap_or(0.0);
     let avg = if c.frame_times.is_empty() { 0.0 } else { c.frame_times.iter().sum::<f32>() / c.frame_times.len() as f32 };
     let info = format!("Bildzeit {:.1} ms (Ø {:.1})", last, avg).replace('.', ",");
     let iw = font::measure(&info, 13.0, Weight::Regular);
     img.text(w - 24.0 - iw, TITLE_H + 48.0, &info, 13.0, Weight::Regular, p.text_muted);
 
     // Bildzeit-Diagramm, Linie bei 16,7 ms (60 FPS)
-    let (gx, gy, gw, gh) = (24.0, TITLE_H + 66.0, w - 48.0, (h - TITLE_H - 150.0).max(40.0));
+    let (gx, gy, gw, gh) = (24.0, TITLE_H + 66.0, w - 48.0, (h - TITLE_H - 190.0).max(40.0));
     let max_ms = 25.0;
     let budget_y = gy + gh - gh * (16.7 / max_ms);
     img.line(gx, budget_y, gx + gw, budget_y, 1.0, p.text_faint.with_alpha(120));
@@ -304,16 +358,90 @@ fn draw_monitor(img: &mut Image, c: &Ctx) {
         }
     }
 
-    // Heap-Auslastung
-    let y = gy + gh + 32.0;
-    img.text(24.0, y, "Kernel-Heap", 13.0, Weight::Regular, p.text_muted);
-    let pct = c.heap.0 as f32 / c.heap.1.max(1) as f32;
-    let label = format!("{:.1} %", pct * 100.0).replace('.', ",");
-    let lw = font::measure(&label, 13.0, Weight::Regular);
-    img.text(w - 24.0 - lw, y, &label, 13.0, Weight::Regular, p.text);
-    img.fill_rounded(24.0, y + 10.0, w - 48.0, 8.0, 4.0, p.control);
-    img.fill_rounded(24.0, y + 10.0, ((w - 48.0) * pct).max(8.0), 8.0, 4.0, p.accent);
+    // CPU- und Heap-Auslastung als Balken
+    let bars = [("CPU-Auslastung", c.cpu / 100.0), ("Kernel-Heap", c.heap.0 as f32 / c.heap.1.max(1) as f32)];
+    for (k, (name, pct)) in bars.iter().enumerate() {
+        let y = gy + gh + 32.0 + k as f32 * 40.0;
+        img.text(24.0, y, name, 13.0, Weight::Regular, p.text_muted);
+        let label = format!("{:.1} %", pct * 100.0).replace('.', ",");
+        let lw = font::measure(&label, 13.0, Weight::Regular);
+        img.text(w - 24.0 - lw, y, &label, 13.0, Weight::Regular, p.text);
+        img.fill_rounded(24.0, y + 10.0, w - 48.0, 8.0, 4.0, p.control);
+        img.fill_rounded(24.0, y + 10.0, ((w - 48.0) * pct.clamp(0.0, 1.0)).max(8.0), 8.0, 4.0, p.accent);
+    }
     img.text(24.0, h - 14.0, "Bildzeit nur von Bildern mit Änderungen · Linie: 16,7 ms", 12.0, Weight::Regular, p.text_faint);
+    let _ = w;
+}
+
+// ---------------------------------------------------------------------------
+// Prozesse – alle Threads mit Zustand und Rechenzeit
+// ---------------------------------------------------------------------------
+
+pub fn tasks_button_rect(w: f32) -> (f32, f32, f32, f32) {
+    (w - 24.0 - 170.0, TITLE_H + 18.0, 170.0, 34.0)
+}
+
+const ROW_Y0: f32 = TITLE_H + 112.0;
+const ROW_H: f32 = 26.0;
+
+/// Welche Zeile wurde beim „×“ getroffen?
+pub fn tasks_kill_hit(w: f32, x: f32, y: f32) -> Option<usize> {
+    if (x - (w - 36.0)).abs() > 12.0 || y < ROW_Y0 - 18.0 {
+        return None;
+    }
+    Some(((y - (ROW_Y0 - 18.0)) / ROW_H) as usize)
+}
+
+fn draw_tasks(img: &mut Image, c: &Snapshot) {
+    let (w, h) = (img.w as f32, img.h as f32);
+    let p = &c.p;
+    let head = format!("{} Threads · CPU {:.0} %", c.tasks.len(), c.cpu);
+    img.text(24.0, TITLE_H + 36.0, &head, 16.0, Weight::SemiBold, p.text);
+    let sub = format!("{} Kontextwechsel seit dem Start", c.switches);
+    img.text(24.0, TITLE_H + 56.0, &sub, 12.0, Weight::Regular, p.text_muted);
+    let (bx, by, bw, bh) = tasks_button_rect(w);
+    img.fill_rounded(bx, by, bw, bh, bh / 2.0, p.accent);
+    img.text_centered(bx + bw / 2.0, by + 22.0, "Rechenlast starten", 13.0, Weight::SemiBold, Rgba::hex(0xFFFFFF));
+
+    let cols = [24.0, w * 0.42, w * 0.57, w * 0.70];
+    for (x, t) in cols.iter().zip(["Thread", "Zustand", "Priorität", "CPU"]) {
+        img.text(*x, TITLE_H + 88.0, t, 12.0, Weight::SemiBold, p.text_faint);
+    }
+    img.line(24.0, TITLE_H + 96.0, w - 24.0, TITLE_H + 96.0, 1.0, p.well_border);
+    let max_rows = ((h - ROW_Y0 - 30.0) / ROW_H).max(0.0) as usize;
+    for (i, t) in c.tasks.iter().take(max_rows).enumerate() {
+        let y = ROW_Y0 + i as f32 * ROW_H;
+        img.text(cols[0], y, &t.name, 13.0, Weight::Regular, p.text);
+        let state = match t.state {
+            State::Running => "läuft",
+            State::Ready => "bereit",
+            State::Sleeping(_) => "schläft",
+            State::Blocked => "wartet",
+            State::Dead => "beendet",
+        };
+        let state_col = if t.state == State::Running { p.accent } else { p.text_muted };
+        img.text(cols[1], y, state, 13.0, Weight::Regular, state_col);
+        let prio = match t.prio {
+            Prio::High => "hoch",
+            Prio::Normal => "normal",
+            Prio::Idle => "Leerlauf",
+        };
+        img.text(cols[2], y, prio, 13.0, Weight::Regular, p.text_muted);
+        // CPU-Balken
+        let bw = (w - 36.0 - 16.0 - 44.0 - cols[3]).clamp(24.0, 90.0);
+        img.fill_rounded(cols[3], y - 9.0, bw, 6.0, 3.0, p.control);
+        img.fill_rounded(cols[3], y - 9.0, (bw * t.cpu / 100.0).clamp(6.0, bw), 6.0, 3.0, p.accent);
+        let pct = format!("{:.0} %", t.cpu);
+        img.text(cols[3] + bw + 8.0, y, &pct, 12.0, Weight::Regular, p.text);
+        if t.killable {
+            let (kx, ky) = (w - 36.0, y - 5.0);
+            img.circle(kx, ky, 9.0, p.control);
+            img.line(kx - 3.0, ky - 3.0, kx + 3.0, ky + 3.0, 1.4, p.text);
+            img.line(kx + 3.0, ky - 3.0, kx - 3.0, ky + 3.0, 1.4, p.text);
+        }
+    }
+    let footer = format!("Primzahlen gefunden: {} · größte: {}", c.primes.0, c.primes.1);
+    img.text(24.0, h - 14.0, &footer, 12.0, Weight::Regular, p.text_faint);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +454,7 @@ pub fn draw_icon(app: AppKind, img: &mut Image, x: f32, y: f32, s: f32) {
         AppKind::Notes => (0xFDE68A, 0xF59E0B),
         AppKind::Settings => (0x94A3B8, 0x475569),
         AppKind::Monitor => (0x34D399, 0x059669),
+        AppKind::Tasks => (0xA78BFA, 0x6D28D9),
     };
     img.fill_rounded_gradient(x, y, s, s, s * 0.24, Rgba::hex(top), Rgba::hex(bottom));
     img.stroke_rounded(x, y, s, s, s * 0.24, 1.0, Rgba::hex(0xFFFFFF).with_alpha(60));
@@ -367,6 +496,13 @@ pub fn draw_icon(app: AppKind, img: &mut Image, x: f32, y: f32, s: f32) {
                 img.line(x + s * a.0, y + s * a.1, x + s * b.0, y + s * b.1, s * 0.06, white);
             }
             img.line(x + s * 0.2, y + s * 0.76, x + s * 0.8, y + s * 0.76, s * 0.04, white.with_alpha(160));
+        }
+        AppKind::Tasks => {
+            for (k, len) in [0.5f32, 0.36, 0.44].iter().enumerate() {
+                let ly = y + s * (0.32 + k as f32 * 0.18);
+                img.circle(x + s * 0.27, ly, s * 0.045, white);
+                img.line(x + s * 0.37, ly, x + s * (0.37 + len), ly, s * 0.06, white);
+            }
         }
     }
 }

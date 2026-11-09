@@ -45,6 +45,11 @@ static GDT: Lazy<(GlobalDescriptorTable, Selectors)> = Lazy::new(|| {
     (gdt, Selectors { code, data, tss })
 });
 
+/// (Code-Selektor, Daten-Selektor) – für neue Threads
+pub fn selectors() -> (u16, u16) {
+    (GDT.1.code.0, GDT.1.data.0)
+}
+
 pub fn init() {
     let (gdt, sel) = &*GDT;
     gdt.load();

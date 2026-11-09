@@ -79,7 +79,7 @@ const C_BOOT: Color = Color::hex(0x60A5FA); // Blau
 const C_ACPI: Color = Color::hex(0xFBBF24); // Bernstein
 const C_USED: Color = Color::hex(0xF472B6); // Pink: von uns belegt
 
-const ROW: i32 = 24;
+const ROW: i32 = 21;
 
 /// Startbildschirm mit Systeminfos, Speicheraufteilung und Selbsttests
 pub fn boot_screen(r: &BootReport) {
@@ -95,7 +95,7 @@ pub fn boot_screen(r: &BootReport) {
     let (lx, ly) = (cx + 40, cy + 36);
     logo(&mut c, lx, ly, 56, ACCENT, ACCENT_2, "A");
     c.text(lx + 80, ly + 2, "AuroraOS", BOLD, RasterHeight::Size32, TEXT);
-    c.text(lx + 80, ly + 36, "Meilenstein 6 · Fenster & Dock", REG, R, ACCENT);
+    c.text(lx + 80, ly + 36, "Meilenstein 7 · Multitasking", REG, R, ACCENT);
 
     let mut y = cy + 128;
     for (label, value) in &r.info {
