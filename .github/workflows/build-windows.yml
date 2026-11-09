@@ -1,0 +1,48 @@
+name: Windows-App bauen
+
+on:
+  push:
+    branches: ["claude/keen-bardeen-x0nk8c", "main"]
+    paths: ["wissensdatenbank/**", ".github/workflows/build-windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: wissensdatenbank
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Pakete installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests
+      - name: Icon erzeugen
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/make_icon.py
+      - name: .exe bauen
+        run: python -m PyInstaller --noconfirm --clean app.spec
+      - name: Kurzer Starttest
+        shell: pwsh
+        run: |
+          $env:KAELTEWIKI_DATA_DIR = "$env:RUNNER_TEMP\kw"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "dist\KaelteWiki.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "App wurde vorzeitig beendet (Exit $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+          if (-not (Test-Path "$env:KAELTEWIKI_DATA_DIR\wissen.db")) { throw "Datenbank wurde nicht angelegt" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KaelteWiki-Windows
+          path: wissensdatenbank/dist/KaelteWiki.exe
+          retention-days: 30
